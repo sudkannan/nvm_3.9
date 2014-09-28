@@ -2449,6 +2449,8 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 	if (!vma)
 		return 0;
 	prev = vma->vm_prev;
+
+
 	/* we have  start < vma->vm_end  */
 
 	/* if it doesn't overlap, we have nothing.. */
@@ -2503,8 +2505,10 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		}
 	}
 
-	//if(vma->persist_flags == PERSIST_VMA_FLAG) 
-	//	printk("do_munmap: Persist flagset before detach_vmas_to_be_unmapped \n");		
+	if(vma->persist_flags == PERSIST_VMA_FLAG) {
+		printk("do_munmap: Persist flagset before detach_vmas_to_be_unmapped \n");		
+		vma->persist_flags = PERSIST_VMA_CLEAR_FLAG;
+	}
 
 	/*
 	 * Remove the vma's, and unmap the actual pages
@@ -2520,6 +2524,7 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 
 	return 0;
 }
+
 
 int vm_munmap(unsigned long start, size_t len)
 {

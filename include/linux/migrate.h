@@ -55,7 +55,10 @@ extern int migrate_vmas(struct mm_struct *mm,
 extern void migrate_page_copy(struct page *newpage, struct page *page);
 extern int migrate_huge_page_move_mapping(struct address_space *mapping,
 				  struct page *newpage, struct page *page);
+extern struct list_head* get_hetero_list(unsigned int *nrpages);
 #else
+
+static struct list_head* get_hetero_list(unsigned int *nrpages);
 
 static inline void putback_lru_pages(struct list_head *l) {}
 static inline void putback_movable_pages(struct list_head *l) {}

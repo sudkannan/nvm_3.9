@@ -1168,6 +1168,7 @@ int isolate_lru_page(struct page *page)
 	VM_BUG_ON(!page_count(page));
 
 	if (PageLRU(page)) {
+		//printk(KERN_ALERT "isolate_lru_page: page is in lru \n");
 		struct zone *zone = page_zone(page);
 		struct lruvec *lruvec;
 
@@ -1181,6 +1182,8 @@ int isolate_lru_page(struct page *page)
 			ret = 0;
 		}
 		spin_unlock_irq(&zone->lru_lock);
+	}else {
+		//printk(KERN_ALERT "page not lru \n");		
 	}
 	return ret;
 }

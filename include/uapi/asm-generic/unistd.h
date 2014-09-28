@@ -706,8 +706,11 @@ __SYSCALL(__NR_nv_commit, sys_nv_commit)
 #define __NR_copydirtpages 			 279
 __SYSCALL(__NR_copydirtpages, sys_copydirtpages)
 
+#define __NR_move_inactpages                   280
+__SYSCALL(__NR_move_inactpages, sys_move_inactpages)
+
 #undef __NR_syscalls
-#define __NR_syscalls 280
+#define __NR_syscalls 281
 
 /*
  * All syscalls below here should go away really,
@@ -880,6 +883,11 @@ __SYSCALL(__NR_initpmem, sys_initpmem)
 __SYSCALL(__NR_nv_commit, sys_nv_commit)
 #define __NR_copydirtpages 			 1085
 __SYSCALL(__NR_copydirtpages, sys_copydirtpages)
+
+
+#define __NR_move_inactpages                  1086
+__SYSCALL(__NR_move_inactpages, sys_move_inactpages)
+
 
 
 

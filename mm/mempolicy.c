@@ -972,6 +972,7 @@ static long do_get_mempolicy(int *policy, nodemask_t *nmask,
 static void migrate_page_add(struct page *page, struct list_head *pagelist,
 				unsigned long flags)
 {
+	//printk(KERN_ALERT "migrate_page_add: calling isolate lru \n");
 	/*
 	 * Avoid migrating a page that is shared with others.
 	 */

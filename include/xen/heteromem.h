@@ -34,6 +34,9 @@ int heteromem_init(int idx, unsigned long start, unsigned long size);
 /*HeteroMem Get next page*/
 struct page *hetero_getnxt_page(bool prefer_highmem);
 
+int send_hotpage_skiplist();
+
+int get_hotpage_list();
 
 struct device;
 #ifdef CONFIG_XEN_SELFBALLOONING

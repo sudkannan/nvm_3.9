@@ -20,7 +20,8 @@
 #define XENMEM_decrease_reservation 1
 #define XENMEM_populate_physmap     6
 #define XENMEM_hetero_populate_physmap     7
-#define XENMEM_hetero_stop_hotpage_scan 8
+#define XENMEM_hetero_stop_hotpage_scan 5
+//#define XENMEM_hetero_hints 9
 
 struct xen_memory_reservation {
 

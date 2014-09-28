@@ -268,6 +268,9 @@ asmlinkage long sys_nv_commit(
 asmlinkage long sys_copydirtpages(
                         struct nvmap_arg_struct __user *nvarg,
                         unsigned int  __user *dest);
+
+asmlinkage long sys_move_inactpages(unsigned long start,  unsigned long migsize);
+
 //NVM Changes
 
 
@@ -934,6 +937,8 @@ asmlinkage long sys_nv_commit(
 asmlinkage long sys_copydirtpages(
                         struct nvmap_arg_struct __user *nvarg,
                         unsigned int  __user *dest);
+
+asmlinkage long sys_move_inactpages(unsigned long start,  unsigned long migsize);
 //NVM Changes
 
 #endif

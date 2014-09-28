@@ -140,6 +140,8 @@ enum zone_stat_item {
 	NUMA_INTERLEAVE_HIT,	/* interleaver preferred this zone */
 	NUMA_LOCAL,		/* allocation from local node */
 	NUMA_OTHER,		/* allocation from other node */
+	NUMA_MIGRATED_FROM,     /*pages migrated from this node*/
+	//NUMA_MIGRATE_FAILED,   /*failed page from this node*/
 #endif
 	NR_ANON_TRANSPARENT_HUGEPAGES,
 	NR_FREE_CMA_PAGES,

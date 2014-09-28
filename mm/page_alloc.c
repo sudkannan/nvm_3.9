@@ -1322,21 +1322,26 @@ void free_hot_cold_page(struct page *page, int cold)
 	struct per_cpu_pages *pcp;
 	unsigned long flags;
 	int migratetype;
+	struct vm_area_struct *vma;
+	struct mm_struct *mm;
+	char *addr;	
 
 #ifdef SETNVMPAGEBIT
      /* NVRAM CHANGES do not free nvram pages */
     if(test_bit(PG_nvram, &page->flags)) {
+		mm = current->mm;
+		addr = page_to_virt(page);
+		vma = find_vma(mm, addr);
+		if(vma && vma->persist_flags == PERSIST_VMA_CLEAR_FLAG){
+			printk("free_hot_cold_page: freeing page \n");
+			goto skip;
+		}		
        //printk("free_hot_cold_page: nvram flag set \n");
        return;
     }
-#else
-   //if(test_bit(PG_nvram, &page->flags)) {
-	//test_and_clear_bit(PG_nvram, &page->flags);
-	//nvm_freed_pgcnt++;
-	//printk("freeing a NVM page %u\n", nvm_freed_pgcnt);
-   //}		
 #endif
 
+skip:
 	if (!free_pages_prepare(page, 0))
 		return;
 

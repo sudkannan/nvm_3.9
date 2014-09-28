@@ -885,9 +885,9 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
         goto err_nv_faultpg;
     }
 
-	buffer = (char *)kmalloc(PAGE_SIZE, GFP_KERNEL);	
-	if(!safe_copy_page(buffer, page))
-	hash = jenkin_hash(buffer, PAGE_SIZE);	
+	//buffer = (char *)kmalloc(PAGE_SIZE, GFP_KERNEL);	
+	//if(!safe_copy_page(buffer, page))
+	//hash = jenkin_hash(buffer, PAGE_SIZE);	
 
 #ifdef LOCAL_DEBUG_FLAG
 	printk("find_page: proc_id %d, chunk_id: %d, hash:%u \n",
@@ -1010,14 +1010,16 @@ struct page* get_page_frm_chunk(struct nv_chunk *chunk, long pg_off){
 		goto page_frm_chunk_err;	
 	}
 
-	/* if( chunk->max_pg_offset < pg_off ) {
+	 if( chunk->max_pg_offset < pg_off ) {
 		//No point iterating the tree.
 		//we will definitely not find the page
 #ifdef LOCAL_DEBUG_FLAG
 		printk("get_page_frm_chunk: req pageoff greater that max\n");
 #endif
 		goto page_frm_chunk_err;
-	}*/
+	}
+
+
 	page = search_page_rbtree(&chunk->page_tree, pg_off);
     if(!page){   
   		goto page_frm_chunk_err;
@@ -1131,7 +1133,8 @@ int intialize_flag = 0;
 
 //System call to allocate a fixed pool
 //returns 0 on successful allocation
-SYSCALL_DEFINE1(nvpoolcreate, unsigned long, num_pool_pages)
+//SYSCALL_DEFINE1(nvpoolcreate, unsigned long, num_pool_pages)
+asmlinkage long sys_nvpoolcreate( unsigned long num_pool_pages)
 {
     int status = -1;
 
@@ -1347,7 +1350,8 @@ error:
 
 /*This system call is for debugging any new kernel functionalites*/
 
-SYSCALL_DEFINE1(NValloc, unsigned long, numpgs)
+//SYSCALL_DEFINE1(NValloc, unsigned long, numpgs)
+asmlinkage long sys_NValloc( unsigned long numpgs)
 {
 	/*if(xen_do_alloc_heteropg(10, 0)){
 		printk("heteromem alloc failed \n");			
@@ -1358,15 +1362,24 @@ SYSCALL_DEFINE1(NValloc, unsigned long, numpgs)
    int rc;
    struct page **pages;
 
-   printk(KERN_ALERT "numpgs %lu \n",numpgs);
-   pages = kcalloc(numpgs, sizeof(pages[0]), GFP_KERNEL);
-   if (pages == NULL)
-           return -ENOMEM;
+   printk(KERN_ALERT "sys_NValloc: numpgs %lu \n",numpgs);
 
+   /*pages = kmalloc(numpgs*sizeof(struct page), GFP_KERNEL);
+   if (pages == NULL) {
+		printk("sys_NValloc: Allocation failed \n"); 
+        return -ENOMEM;
+	}*/
+
+   printk(KERN_ALERT "sys_NValloc: kalloc \n");	
+
+
+	//send_hotpage_skiplist();
    if(numpgs == 0){
 		alloc_xenheteromemed_pages(numpgs, pages, 1, 1);
 		return 0;
    }	
+
+   printk(KERN_ALERT "sys_NValloc: before alloc_xenheteromemed_pages \n");	
 
    rc = alloc_xenheteromemed_pages(numpgs, pages, 1, 0);
    if (rc != 0) {

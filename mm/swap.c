@@ -104,7 +104,6 @@ static void put_compound_page(struct page *page)
 
 				if(test_bit(PG_nvram, &page->flags))
 			  		printk(KERN_ALERT "atomic dec for NVM page");						
-		
 					atomic_dec(&page->_mapcount);
 					goto skip_lock_tail;
 				} else

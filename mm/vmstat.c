@@ -734,6 +734,7 @@ const char * const vmstat_text[] = {
 	"numa_interleave",
 	"numa_local",
 	"numa_other",
+	"numa_migrate",	
 #endif
 	"nr_anon_transparent_hugepages",
 	"nr_free_cma",

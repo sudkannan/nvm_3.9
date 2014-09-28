@@ -81,10 +81,10 @@
 #include <xen/page.h>
 
 
-#define HETEROMEM
+//#define HETEROMEM
 
 static unsigned int del_dirtypgcnt;
-//#define NV_JIT_ALLOC
+#define NV_JIT_ALLOC
 //#define LOCAL_DEBUG_FLAG
 //#define DEBUG_STATS
 /*---Global variales--*/
@@ -4710,6 +4710,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return VM_FAULT_SIGBUS;
 	}
 
+#if 0
     /* Use the zero-page for reads */
     if (!(flags & FAULT_FLAG_WRITE)) {
         entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
@@ -4719,9 +4720,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
             goto unlock;
         goto setpte;
     }
-	write_fault= flags & FAULT_FLAG_WRITE; 
-
-#if 0
+	write_fault= flags & FAULT_FLAG_WRITE;
 if(!vma->noPersist) {
 	/* Use the zero-page for reads */
 	if (!(flags & FAULT_FLAG_WRITE)) {
@@ -4747,6 +4746,7 @@ if(!vma->noPersist) {
 		}	
 		
 	}
+}
 #endif
 
 write_fault:
@@ -4764,8 +4764,10 @@ write_fault:
 				   set_bit(PG_nvram, &page->flags);
 				   add_pages_to_chunk( vma, page, address);
 				   set_bit(PG_nvram, &page->flags);
-				}
-			 }
+				}			 
+			}else {
+				atomic_inc(&page->_count);
+			}
 		}else {
 			/*we require no persistent pages from NVRAM*/
 			page =  nv_alloc_page_numa( vma);
@@ -4864,13 +4866,13 @@ oom:
 	return VM_FAULT_OOM;
 }
 
+
 /*Alloc zero pages This funnction should be added to NValloc file */
 static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
 {
 	struct page *page;
 
 	page = getnvpage(vma); 
-   
 	//WARN_ON(refill_nvpages());
 	/*try getting after refill*/
 	if( !page) {
@@ -4885,9 +4887,9 @@ static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
 	atomic_inc(&page->_count);
 	//atomic_inc(&page->_count);
 	//spin_unlock(&nv_pagelist_lock);
-
    return page;
 }
+
 
 int refill_nvpages(void){
 
@@ -4964,6 +4966,7 @@ get_frm_jit_alloc:
 	}
 #endif
 
+
 #ifdef HETEROMEM
 get_frm_hetero:
 
@@ -4987,6 +4990,7 @@ get_frm_hetero:
 #endif
 
 #endif
+
 	spin_unlock(&nvpagelock);
 	return page; 
 
@@ -5172,8 +5176,9 @@ int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages)
         page = nv_alloc_fresh_page_node(start_nid, PAGE_SIZE);
         if (page)
             list_add(&page->nvlist, &nv_free_page_list);
-
+		else{
 			goto err_alloc;
+		}
 	}
     return 0;
 err_alloc:

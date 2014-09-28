@@ -229,6 +229,7 @@ struct vm_region {
 enum vm_persist_flags {
         PERSIST_START_ENUM,
         PERSIST_VMA_FLAG,
+	PERSIST_VMA_CLEAR_FLAG,
  };
 
 
