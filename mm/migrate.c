@@ -2699,6 +2699,8 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 	int flags=0;
 	unsigned long migratetot=0;
 
+	printk(KERN_ALERT "sys_move_inactpages: calling get_hotpage_list \n");
+
  	get_hotpage_list();	
 
 	return 0;

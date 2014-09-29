@@ -520,8 +520,9 @@ int get_hotpage_list()
 		reservation.nr_extents = 1;
 		printk(KERN_ALERT "get_hotpage_list: Invoking XENMEM_hetero_stop_hotpage_scan call\n");
 
+
 		//Test XENMEM_hetero_populate_physmap call	
-		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
+		/*ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
 		if (ret <= 0){
 			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			//goto skiplisterr;
@@ -530,9 +531,9 @@ int get_hotpage_list()
 
 		for (i = 0; i < ret; i++) {
 		
-			printk(KERN_ALERT "get_hotpage_list: hetero_frame_list[%d]: %lu \n",
-								i, hetero_frame_list[i]); 
-		}
+			//printk(KERN_ALERT "get_hotpage_list: hetero_frame_list[%d]: %lu \n",
+			//					i, hetero_frame_list[i]); 
+		}*/
 		return state;
 
 
