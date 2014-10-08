@@ -1372,7 +1372,6 @@ asmlinkage long sys_NValloc( unsigned long numpgs)
 
    printk(KERN_ALERT "sys_NValloc: kalloc \n");	
 
-
 	//send_hotpage_skiplist();
    if(numpgs == 0){
 		alloc_xenheteromemed_pages(numpgs, pages, 1, 1);

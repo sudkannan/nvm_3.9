@@ -38,6 +38,8 @@ int send_hotpage_skiplist();
 
 int get_hotpage_list();
 
+int is_hetero_hot_page(struct page *page);
+
 struct device;
 #ifdef CONFIG_XEN_SELFBALLOONING
 extern int register_xen_selfheteromeming(struct device *dev);

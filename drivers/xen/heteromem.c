@@ -102,7 +102,7 @@ struct heteromem_stats heteromem_stats;
 EXPORT_SYMBOL_GPL(heteromem_stats);
 
 /* We increase/decrease in batches which fit in a page */
-static xen_pfn_t hetero_frame_list[(PAGE_SIZE*2) / sizeof(unsigned long)];
+static xen_pfn_t hetero_frame_list[PAGE_SIZE];
 
 #ifdef CONFIG_HIGHMEM
 #define inc_totalhigh_pages() (totalhigh_pages++)
@@ -123,8 +123,8 @@ static LIST_HEAD(hetero_used_lst_pgs);
 static unsigned int ready_lst_pgcnt;
 /*hetero used page list count*/
 static unsigned int used_lst_pgcnt;
-
 static unsigned int dbg_resv_hetropg_cnt;
+static unsigned int hotpagecnt;
 
 
 /* Main work function, always executed in process context. */
@@ -425,7 +425,7 @@ int send_hotpage_skiplist()
 		unsigned int nr_pages;
 		int ret = 0;	
 
-		printk(KERN_ALERT "calling send_hotpage_skiplist\n");
+		printk("calling send_hotpage_skiplist\n");
 
 		struct xen_memory_reservation reservation = {
 				.address_bits = 0,
@@ -436,10 +436,10 @@ int send_hotpage_skiplist()
 		hetero_skiplst = get_hetero_list(&nr_pages);
 
 		if(!nr_pages){
-			printk(KERN_ALERT "send_hotpage_skiplist: get_hetero_list returns 0 pages \n");
+			printk("send_hotpage_skiplist: get_hetero_list returns 0 pages \n");
 			goto skiplisterr;
 		}else {
-			printk(KERN_ALERT "send_hotpage_skiplist: get_hetero_list returns %u pages \n", 
+			printk("send_hotpage_skiplist: get_hetero_list returns %u pages \n", 
 								nr_pages);
 		}
 
@@ -494,6 +494,35 @@ skiplisterr:
 }
 EXPORT_SYMBOL(send_hotpage_skiplist);
 
+/*Check if a page is in the hotlist set by hypercall or 
+guest domain*/
+int is_hetero_hot_page(struct page *page){
+
+	int idx =0;
+	unsigned int hotpfn=0;
+	unsigned long hotpfnlong=0;
+	unsigned int pfn = page_to_pfn(page);
+
+	for(idx=0; idx < hotpagecnt; idx++) {
+
+	   hotpfn = mfn_to_pfn(hetero_frame_list[idx]);
+
+	   printk(KERN_ALERT,"hotpfn %u, pfn %u\n",
+				hotpfn, pfn);
+
+	   if( pfn == hotpfn) {
+		 //printk(KERN_ALERT "s_hetero_hot_page: condition succeeds\n");
+		 return 1;
+		}
+	
+		if(pfn == hotpfnlong){
+			//printk(KERN_ALERT "hotpfn long condition succeeds\n");
+		}
+	}
+	return 0;
+}
+EXPORT_SYMBOL(is_hetero_hot_page);
+
 
 int get_hotpage_list()
 {
@@ -504,8 +533,10 @@ int get_hotpage_list()
 		struct list_head *hetero_skiplst;
 		unsigned int nr_pages;
 		int ret = 0;	
+	    int pfnconvfailed=0;
 
-		printk(KERN_ALERT "calling send_hotpage_skiplist\n");
+
+		printk("calling send_hotpage_skiplist\n");
 
 		struct xen_memory_reservation reservation = {
 				.address_bits = 0,
@@ -518,23 +549,37 @@ int get_hotpage_list()
 		reservation.mem_flags = reservation.mem_flags|XENMEMF_hetero_mem_request;
 		set_xen_guest_handle(reservation.extent_start, hetero_frame_list);
 		reservation.nr_extents = 1;
-		printk(KERN_ALERT "get_hotpage_list: Invoking XENMEM_hetero_stop_hotpage_scan call\n");
+		printk("get_hotpage_list: Invoking XENMEM_hetero_stop_hotpage_scan call\n");
 
 
 		//Test XENMEM_hetero_populate_physmap call	
-		/*ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
+		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
 		if (ret <= 0){
 			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			//goto skiplisterr;
 		}
-		printk(KERN_ALERT "get_hotpage_list: XENMEM_hetero_stop_hotpage_scan called\n");
+		printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
+						  "returns %u\n", ret);
 
-		for (i = 0; i < ret; i++) {
-		
-			//printk(KERN_ALERT "get_hotpage_list: hetero_frame_list[%d]: %lu \n",
-			//					i, hetero_frame_list[i]); 
-		}*/
-		return state;
+		if(ret > 0) {
+		 for (i = 0; i < ret; i++) {
+
+			 pfnconvfailed=0;
+	         pfn = mfn_to_pfn(hetero_frame_list[i]);
+			 page = pfn_to_page(pfn);
+			 if(!page) {
+				pfnconvfailed=1;
+			 }	
+		 	 ///printk(KERN_ALERT "get_hotpage_list: frame_list[%d]: "
+				//			   "%lu, pfn %u, pfn2page fail?%d \n",
+				//				i, hetero_frame_list[i], pfn, pfnconvfailed);
+		 	//printk(KERN_ALERT "get_hotpage_list: frame_list[%d]:, ret %d \n",
+			//				i, ret); 
+		 }
+		}
+		hotpagecnt = ret;	
+
+		return hotpagecnt;
 
 
 #if 0
@@ -820,7 +865,7 @@ int alloc_xenheteromemed_pages(int nr_pages, struct page **pages, bool highmem, 
 	}
 #endif
 
-	printk(KERN_ALERT "alloc_xenheteromemed_pages called \n");
+	printk("alloc_xenheteromemed_pages called \n");
 
 	if (delpage) {
 		 nr_pages = used_lst_pgcnt;
@@ -848,13 +893,13 @@ int alloc_xenheteromemed_pages(int nr_pages, struct page **pages, bool highmem, 
 		for (idx =0; idx < iter; idx++) {
 			st = increase_reservation(nr_pages,pages);	
 			if(st != BP_DONE){
-				printk(KERN_ALERT "heteromem reservation succeeded only for %u of %u pages \n",
+				printk("heteromem reservation succeeded only for %u of %u pages \n",
 				idx*nr_pages, iter*nr_pages);
 				goto out_undo;	
 			}
 		}
 	}
-	printk(KERN_ALERT "heteromem reservation succeeded for %u  pages \n",
+	printk("heteromem reservation succeeded for %u  pages \n",
 					iter*nr_pages);
 
 	mutex_unlock(&heteromem_mutex);

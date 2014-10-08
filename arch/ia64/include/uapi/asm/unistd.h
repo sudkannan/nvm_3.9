@@ -332,6 +332,7 @@
 #define __NR_initpmem      1339
 #define __NR_nv_commit     1340
 #define __NR_copydirtpages 1341
+#define __NR_move_inactpages 1342
 
 
 
