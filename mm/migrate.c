@@ -2881,10 +2881,12 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 		  check_node_range(mm, start, end, &nmask,
     			  flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &pagelist);
 
+#ifdef HETERODEBUG
 		  printk("sys_move_inactpages: after check_node_range pg_debug_count %u, "
     	      "nonrsrvpg_dbg_count %u, beforemigrate_dbg_count %u, "
         	  "normalpg_dbg_count %u\n", pg_debug_count, nonrsrvpg_dbg_count, 
 	       	   beforemigrate_dbg_count, normalpg_dbg_count);
+#endif
 
 	      if (!list_empty(&pagelist)) {
     	   	 //printk("sys_move_inactpages: calling migrate_pages function \n");
@@ -2897,8 +2899,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 		  }
 
 		 size += (end-start)/4096;	
+#ifdef HETERODEBUG
 		 printk("sys_move_inactpages: %lu out of %lu\n",
                     nr_migrate_success,size);
+#endif
 
     }
 #endif
