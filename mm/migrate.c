@@ -1239,10 +1239,15 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 #ifdef ENABLE_HETERO
 			if(is_hetero_hot_page(page)) {
 				//printk(KERN_ALERT "migrate_pages: page in hotlist \n");
+			    rc = unmap_and_move(get_new_page, private,
+        			  page, pass > 2, mode);
+			}else {
+				rc =  -ENOMEM;
 			}
-#endif
+#else
 			rc = unmap_and_move(get_new_page, private,
 						page, pass > 2, mode);
+#endif
 
 			switch(rc) {
 			case -ENOMEM:
@@ -1261,6 +1266,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 					printk("migrating inactive page\n");
 #endif
 /*NVM CHANGES*/
+				list_del(&page->lru);
 				nr_succeeded++;
 				nr_migrate_success++;
 				inc_zone_page_state(page, NUMA_MIGRATED_FROM);
@@ -1274,8 +1280,8 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 				break;
 			}
 //#ifdef ENABLE_HETERO
-			if(page)
-				hetero_update(page);
+			//if(page)
+			//hetero_update(page);
 //#endif
 		}
 	}
@@ -2792,9 +2798,9 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 
 	printk("sys_move_inactpages: calling get_hotpage_list \n");
 
- 	//if(!get_hotpage_list())
-	//	return 0;
-	get_hotpage_list();
+ 	if(!get_hotpage_list())
+		return 0;
+	//get_hotpage_list();
 
 	if (!mm)
 		return 0;
