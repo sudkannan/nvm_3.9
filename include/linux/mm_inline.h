@@ -33,7 +33,7 @@ static __always_inline void add_page_to_lru_list(struct page *page,
 	if(NR_LRU_BASE + lru == NR_ACTIVE_ANON){
         if(test_bit(PG_nvram, &page->flags)) {
             nr_active_nvmpgs++;
-            printk(KERN_ALERT "num active nvm pages: %u\n",nr_active_nvmpgs);
+            //printk(KERN_ALERT "num active nvm pages: %u\n",nr_active_nvmpgs);
         }
 	}	
 #endif

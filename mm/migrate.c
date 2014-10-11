@@ -753,6 +753,8 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 	struct mem_cgroup *mem;
 	struct anon_vma *anon_vma = NULL;
 
+	//dump_page(page);
+
 	if (!trylock_page(page)) {
 		if (!force || mode == MIGRATE_ASYNC)
 			goto out;
@@ -840,6 +842,7 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 		 * the page migration right away (proteced by page lock).
 		 */
 		rc = balloon_page_migrate(newpage, page, mode);
+		printk(KERN_ALERT "movepage: Balloon page \n");
 		goto uncharge;
 	}
 
@@ -883,7 +886,14 @@ uncharge:
 				 (rc == MIGRATEPAGE_SUCCESS ||
 				  rc == MIGRATEPAGE_BALLOON_SUCCESS));
 	unlock_page(page);
+
+	if(newpage)
+		set_bit(PG_nvram, &newpage->flags);
+
+	//page->flags = 0;
+	//printk(KERN_ALERT "__unmap_and_move: releasing page \n");
 out:
+	//dump_page(page);
 	return rc;
 }
 
@@ -1235,7 +1245,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 				printk(KERN_ALERT "migrate_pages: page for unmap_and_move is null\n");
 				continue;
 			}
-
+#if 1
 #ifdef ENABLE_HETERO
 			if(is_hetero_hot_page(page)) {
 				//printk(KERN_ALERT "migrate_pages: page in hotlist \n");
@@ -1245,9 +1255,13 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 				rc =  -ENOMEM;
 			}
 #else
-			rc = unmap_and_move(get_new_page, private,
-						page, pass > 2, mode);
 #endif
+//			rc = unmap_and_move(get_new_page, private,
+//						page, pass > 2, mode);
+#endif
+//			rc = unmap_and_move(get_new_page, private,
+//						page, pass > 2, mode);
+
 
 			switch(rc) {
 			case -ENOMEM:
@@ -1266,7 +1280,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 					printk("migrating inactive page\n");
 #endif
 /*NVM CHANGES*/
-				list_del(&page->lru);
+				//list_del(&page->lru);
 				nr_succeeded++;
 				nr_migrate_success++;
 				inc_zone_page_state(page, NUMA_MIGRATED_FROM);
@@ -1373,9 +1387,9 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 
 
 #ifdef ENABLE_HETERO
+	//page = alloc_page(GFP_HIGHUSER);
 	page = hetero_getnxt_page(false);
 	if(!page){
-
     	printk(KERN_ALERT "new_page_node: getting heteropage failed \n");
 	    //goto page_error;
     	//nodeid = find_persistent_node();
@@ -1386,6 +1400,8 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 	    }       
 	}else{
 		//printk(KERN_ALERT "new_page_node: getting heteropage succeeded \n");
+		//page->flags = page->flags | PG_nvram;
+		set_bit(PG_nvram, &page->flags);
 	} 
 	return page;
   
@@ -2552,14 +2568,14 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 
 		normalpg_dbg_count++;
 
-#ifndef ENABLE_HETERO
+//#ifndef ENABLE_HETERO
 		/*
 		 * vm_normal_page() filters out zero pages, but there might
 		 * still be PageReserved pages to skip, perhaps in a VDSO.
 		 */
 		if (PageReserved(page))
 			continue;
-#endif
+//#endif
 
 		nonrsrvpg_dbg_count++;
 
@@ -2569,17 +2585,17 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 
 		beforemigrate_dbg_count++;	
 
-#ifndef ENABLE_HETERO
+//#ifndef ENABLE_HETERO
 		if (flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)) {
-#endif
+//#endif
 
 			//printk(KERN_ALERT "Adding to migrate_page_add list \n");
 			migrate_page_add(page, private, flags);
-#ifndef ENABLE_HETERO
+//#ifndef ENABLE_HETERO
 		}
 		else
 			break;
-#endif
+//#endif
 
 	} while (pte++, addr += PAGE_SIZE, addr != end);
 	pte_unmap_unlock(orig_pte, ptl);
@@ -2898,17 +2914,17 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
     	   	 //printk("sys_move_inactpages: calling migrate_pages function \n");
 		     err = my_migrate_pages(&pagelist, new_page_node, dest,
                                MIGRATE_SYNC, MR_SYSCALL);
-    	     if (err)
-             	putback_lru_pages(&pagelist);
+    	     //if (err)
+             //	putback_lru_pages(&pagelist);
 		  }else {
    		     //printk("sys_move_inactpages: pagelist empty \n");
 		  }
 
 		 size += (end-start)/4096;	
-#ifdef HETERODEBUG
+//#ifdef HETERODEBUG
 		 printk("sys_move_inactpages: %lu out of %lu\n",
                     nr_migrate_success,size);
-#endif
+//#endif
 
     }
 #endif

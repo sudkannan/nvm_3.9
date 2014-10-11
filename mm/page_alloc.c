@@ -323,6 +323,10 @@ static void bad_page(struct page *page)
 
 	printk(KERN_ALERT "BUG: Bad page state in process %s  pfn:%05lx\n",
 		current->comm, page_to_pfn(page));
+
+	if(test_bit(PG_nvram, &page->flags)) {
+	//	printk(KERN_ALERT "BUG:	NVRAM flag set \n");
+	}
 	dump_page(page);
 
 	print_modules();
@@ -377,6 +381,7 @@ static int destroy_compound_page(struct page *page, unsigned long order)
 	int bad = 0;
 
 	if (unlikely(compound_order(page) != order)) {
+		printk(KERN_ALERT "Bad page in destroy_compound_page 1\n");	
 		bad_page(page);
 		bad++;
 	}
@@ -387,6 +392,7 @@ static int destroy_compound_page(struct page *page, unsigned long order)
 		struct page *p = page + i;
 
 		if (unlikely(!PageTail(p) || (p->first_page != page))) {
+			printk(KERN_ALERT "Bad page in destroy_compound_page 2\n");
 			bad_page(page);
 			bad++;
 		}
@@ -614,9 +620,15 @@ static inline int free_pages_check(struct page *page)
 		(atomic_read(&page->_count) != 0) |
 		(page->flags & PAGE_FLAGS_CHECK_AT_FREE) |
 		(mem_cgroup_bad_page_check(page)))) {
+
+		 if(test_bit(PG_nvram, &page->flags)) {
+		  printk("Bad page PG_nvram set \n");	
+		  goto continue_free;		  	
+		 }	
 		bad_page(page);
 		return 1;
 	}
+continue_free:
 	page_nid_reset_last(page);
 	if (page->flags & PAGE_FLAGS_CHECK_AT_PREP)
 		page->flags &= ~PAGE_FLAGS_CHECK_AT_PREP;
@@ -710,8 +722,10 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 
 	if (PageAnon(page))
 		page->mapping = NULL;
+
 	for (i = 0; i < (1 << order); i++)
 		bad += free_pages_check(page + i);
+
 	if (bad)
 		return false;
 
@@ -851,6 +865,7 @@ static inline int check_new_page(struct page *page)
 		(atomic_read(&page->_count) != 0)  |
 		(page->flags & PAGE_FLAGS_CHECK_AT_PREP) |
 		(mem_cgroup_bad_page_check(page)))) {
+		printk(KERN_ALERT "Bad page check_new_page \n");
 		bad_page(page);
 		return 1;
 	}
