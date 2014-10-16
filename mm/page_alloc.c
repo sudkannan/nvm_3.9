@@ -326,6 +326,7 @@ static void bad_page(struct page *page)
 
 	if(test_bit(PG_nvram, &page->flags)) {
 	//	printk(KERN_ALERT "BUG:	NVRAM flag set \n");
+		return;
 	}
 	dump_page(page);
 

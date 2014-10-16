@@ -36,7 +36,7 @@ struct page *hetero_getnxt_page(bool prefer_highmem);
 
 int send_hotpage_skiplist();
 
-int get_hotpage_list();
+xen_pfn_t *get_hotpage_list(unsigned int *hotcnt);
 
 int is_hetero_hot_page(struct page *page);
 

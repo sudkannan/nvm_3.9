@@ -69,7 +69,7 @@ Also all code related to hotplug has been removed */
 #include <xen/heteromem.h>
 #include <xen/features.h>
 #include <xen/page.h>
-
+#include <linux/mm.h>
 #include <linux/migrate.h>
 
 /*Debug flag*/
@@ -80,6 +80,8 @@ Also all code related to hotplug has been removed */
 #define XENMEMF_get_node(x) ((((x) >> 8) - 1) & 0xffu)
 #define XENMEMF_hetero_mem_request  (1<<18)
 #define XENMEMF_hetero_stop_hotpage_scan (1<<19)
+
+#define MAX_HOT_MFN 16384
 
 /*
  * heteromem_process() state:
@@ -102,7 +104,10 @@ struct heteromem_stats heteromem_stats;
 EXPORT_SYMBOL_GPL(heteromem_stats);
 
 /* We increase/decrease in batches which fit in a page */
-static xen_pfn_t hetero_frame_list[PAGE_SIZE];
+///static xen_pfn_t *hetero_frame_list;
+static xen_pfn_t hetero_frame_list[MAX_HOT_MFN];
+//static xen_pfn_t hetero_frame_listshadow[PAGE_SIZE];
+
 
 #ifdef CONFIG_HIGHMEM
 #define inc_totalhigh_pages() (totalhigh_pages++)
@@ -125,6 +130,7 @@ static unsigned int ready_lst_pgcnt;
 static unsigned int used_lst_pgcnt;
 static unsigned int dbg_resv_hetropg_cnt;
 static unsigned int hotpagecnt;
+static unsigned int mfnmatchcnt;
 
 
 /* Main work function, always executed in process context. */
@@ -270,8 +276,14 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		.mem_flags	  = 0
 	};
 
-	if (nr_pages > ARRAY_SIZE(hetero_frame_list))
-		nr_pages = ARRAY_SIZE(hetero_frame_list);
+	if(!hetero_frame_list) {
+		printk(KERN_ALERT "hetero_frame_list alloc failed \n");
+		return BP_EAGAIN; 
+	}
+
+	//if (nr_pages > ARRAY_SIZE(hetero_frame_list))
+		//nr_pages = ARRAY_SIZE(hetero_frame_list);
+	nr_pages = MAX_HOT_MFN;
 
 	page = heteromem_first_page();
 	for (i = 0; i < nr_pages; i++) {
@@ -494,6 +506,8 @@ skiplisterr:
 }
 EXPORT_SYMBOL(send_hotpage_skiplist);
 
+
+
 /*Check if a page is in the hotlist set by hypercall or 
 guest domain*/
 int is_hetero_hot_page(struct page *page){
@@ -503,20 +517,33 @@ int is_hetero_hot_page(struct page *page){
 	unsigned long hotpfnlong=0;
 	unsigned int pfn = page_to_pfn(page);
 
+//	printk(KERN_ALERT "mfn match cnt %u\n",mfnmatchcnt);
+
+    if(!hetero_frame_list) {
+        printk(KERN_ALERT "hetero_frame_list alloc failed \n");
+        return -1;
+    }
+
 	for(idx=0; idx < hotpagecnt; idx++) {
 
+	  //if(idx < 100)
 	   hotpfn = mfn_to_pfn(hetero_frame_list[idx]);
 
-	   printk(KERN_ALERT,"hotpfn %u, pfn %u\n",
-				hotpfn, pfn);
+	   if(!hotpfn) continue;
+
+	   //printk(KERN_ALERT "hotpfn %u, pfn %u\n",
+		//		hotpfn, pfn);
 
 	   if( pfn == hotpfn) {
 		 //printk(KERN_ALERT "s_hetero_hot_page: condition succeeds\n");
+		 mfnmatchcnt++;
 		 return 1;
 		}
 	
 		if(pfn == hotpfnlong){
 			//printk(KERN_ALERT "hotpfn long condition succeeds\n");
+		    mfnmatchcnt++;
+			return 1;
 		}
 	}
 	return 0;
@@ -524,7 +551,7 @@ int is_hetero_hot_page(struct page *page){
 EXPORT_SYMBOL(is_hetero_hot_page);
 
 
-int get_hotpage_list()
+xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 {
 		enum bp_state state = BP_DONE;
 		unsigned long  pfn, i;
@@ -534,9 +561,15 @@ int get_hotpage_list()
 		unsigned int nr_pages;
 		int ret = 0;	
 	    int pfnconvfailed=0;
+		struct mm_struct *mm = NULL;
+		struct vm_area_struct *vma=NULL;
+		unsigned long addr =0;	
 
-
-		printk("calling send_hotpage_skiplist\n");
+		//printk("calling send_hotpage_skiplist\n");
+		if(!hetero_frame_list) {
+        	printk(KERN_ALERT "hetero_frame_list alloc failed \n");
+        	return NULL;
+    	}
 
 		struct xen_memory_reservation reservation = {
 				.address_bits = 0,
@@ -549,8 +582,6 @@ int get_hotpage_list()
 		reservation.mem_flags = reservation.mem_flags|XENMEMF_hetero_mem_request;
 		set_xen_guest_handle(reservation.extent_start, hetero_frame_list);
 		reservation.nr_extents = 1;
-		printk("get_hotpage_list: Invoking XENMEM_hetero_stop_hotpage_scan call\n");
-
 
 		//Test XENMEM_hetero_populate_physmap call	
 		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
@@ -558,28 +589,50 @@ int get_hotpage_list()
 			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			//goto skiplisterr;
 		}
-		printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
-						  "returns %u\n", ret);
-
+		//printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
+		//				  "returns %u\n", ret);
+#if 0	
 		if(ret > 0) {
-		 for (i = 0; i < ret; i++) {
+		 for (i = 0; i < PAGE_SIZE; i++) {
 
+			 hetero_frame_listshadow[i]=hetero_frame_list[i];
+			 hetero_frame_list[i]=0;
+#if 0
 			 pfnconvfailed=0;
 	         pfn = mfn_to_pfn(hetero_frame_list[i]);
 			 page = pfn_to_page(pfn);
 			 if(!page) {
 				pfnconvfailed=1;
-			 }	
+				printk(KERN_ALERT "get_hotpage_list: page NULL \n");
+			 }else {
+				mm = current->mm;
+				if(mm) {
+        	     	addr = page_address(page);
+            	 	vma = find_vma(mm, addr);
+				}else {
+					printk(KERN_ALERT "get_hotpage_list: mm NULL \n");
+				}
+
+			 	if(vma) {
+					printk(KERN_ALERT "get_hotpage_list: vma found \n");
+			 	}else {
+					//printk(KERN_ALERT "get_hotpage_list: vma not found \n");
+			 	}			
+			 }
 		 	 ///printk(KERN_ALERT "get_hotpage_list: frame_list[%d]: "
 				//			   "%lu, pfn %u, pfn2page fail?%d \n",
 				//				i, hetero_frame_list[i], pfn, pfnconvfailed);
 		 	//printk(KERN_ALERT "get_hotpage_list: frame_list[%d]:, ret %d \n",
 			//				i, ret); 
+#endif
 		 }
 		}
+#endif
 		hotpagecnt = ret;	
 
-		return hotpagecnt;
+		*hotcnt = ret;
+
+		return hetero_frame_list;
 
 
 #if 0
@@ -641,6 +694,7 @@ skiplisterr:
 		return BP_EAGAIN;	
 #endif
 
+
 }
 EXPORT_SYMBOL(get_hotpage_list);
 
@@ -671,9 +725,9 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 
 	/*If the requested pages are higher than framelist size, then reserve 
 	in multiple iteration. Not very optimal */
-	if (nr_pages > ARRAY_SIZE(hetero_frame_list)) {
-        iter = (nr_pages/ARRAY_SIZE(hetero_frame_list));
-		remind = nr_pages % ARRAY_SIZE(hetero_frame_list);
+	if (nr_pages > MAX_HOT_MFN) {
+        iter = (nr_pages/MAX_HOT_MFN);
+		remind = nr_pages % MAX_HOT_MFN;
 		if(remind){
 			iter = iter + 1;
 		}
@@ -683,11 +737,11 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 				"remind %lu\n ",
 				nr_pages, iter, nr_pages* iter,remind);
 
-		nr_pages =  ARRAY_SIZE(hetero_frame_list);
+		nr_pages =  MAX_HOT_MFN;
 
 	}else {
 		iter = 1;
-		remind = nr_pages % ARRAY_SIZE(hetero_frame_list);
+		remind = nr_pages % MAX_HOT_MFN;
 	}
 
 	for (idx =0; idx < iter; idx++) {
@@ -696,8 +750,8 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 			 hetero_frame_list[i] =0;
 		 }	
 
-		//if (nr_pages > ARRAY_SIZE(hetero_frame_list))
-			nr_pages = ARRAY_SIZE(hetero_frame_list);
+		//if (nr_pages > MAX_HOT_MFN)
+			nr_pages = MAX_HOT_MFN;
 
 			if((idx == iter-1) && remind)
 				nr_pages = remind-3;
@@ -878,14 +932,14 @@ int alloc_xenheteromemed_pages(int nr_pages, struct page **pages, bool highmem, 
 
 	/*If the requested pages are higher than framelist size, then reserve 
 	in multiple iteration. Not very optimal */
-		if (nr_pages > ARRAY_SIZE(hetero_frame_list)) {
+		if (nr_pages > MAX_HOT_MFN) {
 
-			iter = (nr_pages/ARRAY_SIZE(hetero_frame_list));
-			remind = nr_pages % ARRAY_SIZE(hetero_frame_list);
+			iter = (nr_pages/MAX_HOT_MFN);
+			remind = nr_pages % MAX_HOT_MFN;
 			if(remind) {
 				iter = iter + 1;
 			}
-			nr_pages =  ARRAY_SIZE(hetero_frame_list);
+			nr_pages =  MAX_HOT_MFN;
 		}else {
 			iter = 1;
 		}
@@ -1082,6 +1136,12 @@ int heteromem_init(int idx, unsigned long start, unsigned long size)
 		heteromem_add_region(PFN_UP(start),
 				   PFN_DOWN(size));
 	}
+	
+	/*hetero_frame_list =  kmalloc(MAX_HOT_MFN, GFP_KERNEL);
+	if(!hetero_frame_list) {
+		printk(KERN_ALERT "hetero_frame_list alloc failed \n");
+	}*/	
+
 	return 0;
 }
 EXPORT_SYMBOL(heteromem_init);
