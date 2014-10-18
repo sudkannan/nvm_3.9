@@ -495,7 +495,7 @@ sendskiplist:
 		//Test XENMEM_hetero_populate_physmap call	
 		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
 		if (ret <= 0){
-			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
+			//printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			goto skiplisterr;
 		}
 		return state;
@@ -517,8 +517,6 @@ int is_hetero_hot_page(struct page *page){
 	unsigned long hotpfnlong=0;
 	unsigned int pfn = page_to_pfn(page);
 
-//	printk(KERN_ALERT "mfn match cnt %u\n",mfnmatchcnt);
-
     if(!hetero_frame_list) {
         printk(KERN_ALERT "hetero_frame_list alloc failed \n");
         return -1;
@@ -526,23 +524,17 @@ int is_hetero_hot_page(struct page *page){
 
 	for(idx=0; idx < hotpagecnt; idx++) {
 
-	  //if(idx < 100)
 	   hotpfn = mfn_to_pfn(hetero_frame_list[idx]);
 
 	   if(!hotpfn) continue;
 
-	   //printk(KERN_ALERT "hotpfn %u, pfn %u\n",
-		//		hotpfn, pfn);
-
 	   if( pfn == hotpfn) {
-		 //printk(KERN_ALERT "s_hetero_hot_page: condition succeeds\n");
 		 mfnmatchcnt++;
 		 return 1;
 		}
 	
 		if(pfn == hotpfnlong){
 			//printk(KERN_ALERT "hotpfn long condition succeeds\n");
-		    mfnmatchcnt++;
 			return 1;
 		}
 	}
@@ -586,7 +578,7 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 		//Test XENMEM_hetero_populate_physmap call	
 		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
 		if (ret <= 0){
-			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
+			//printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			//goto skiplisterr;
 		}
 		//printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
@@ -821,7 +813,7 @@ start_deletion:
 		//Test XENMEM_hetero_populate_physmap call	
 		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
 		if (ret <= 0){
-			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
+			//printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			return BP_EAGAIN;
 		}
 
