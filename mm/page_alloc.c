@@ -325,7 +325,7 @@ static void bad_page(struct page *page)
 		current->comm, page_to_pfn(page));
 
 	if(test_bit(PG_nvram, &page->flags)) {
-	//	printk(KERN_ALERT "BUG:	NVRAM flag set \n");
+		printk(KERN_ALERT "BUG:	NVRAM flag set \n");
 		return;
 	}
 	dump_page(page);
@@ -622,7 +622,14 @@ static inline int free_pages_check(struct page *page)
 		(page->flags & PAGE_FLAGS_CHECK_AT_FREE) |
 		(mem_cgroup_bad_page_check(page)))) {
 
-		 if(test_bit(PG_nvram, &page->flags)) {
+	 if(test_bit(PG_nvram, &page->flags)) {
+		
+		if(mem_cgroup_bad_page_check(page))	
+			 printk("Fails mem_cgroup_bad_page_check \n");
+
+		if(page->flags & PAGE_FLAGS_CHECK_AT_FREE)
+				 printk("(page->flags & PAGE_FLAGS_CHECK_AT_FREE)\n");
+
 		  printk("Bad page PG_nvram set \n");	
 		  goto continue_free;		  	
 		 }	

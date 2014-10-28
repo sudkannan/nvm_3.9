@@ -82,6 +82,7 @@ Also all code related to hotplug has been removed */
 #define XENMEMF_hetero_stop_hotpage_scan (1<<19)
 
 #define MAX_HOT_MFN 16384
+#define MAX_MIGRATE 4096
 
 /*
  * heteromem_process() state:
@@ -620,6 +621,10 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 		 }
 		}
 #endif
+
+		if(ret > MAX_MIGRATE)
+			ret = MAX_MIGRATE;
+
 		hotpagecnt = ret;	
 
 		*hotcnt = ret;

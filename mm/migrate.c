@@ -55,7 +55,7 @@
 #define HETERO_SKIPLIST_LEN 1024*512
 //#define SELECTIVE_HETERO_SCAN
 #define PAGE_MIGRATED 2
-
+#define HETERO_STATS 0
 
 
 /* Internal flags */
@@ -897,8 +897,8 @@ uncharge:
 				  rc == MIGRATEPAGE_BALLOON_SUCCESS));
 	unlock_page(page);
 
-	//if(newpage)
-	//	set_bit(PG_nvram, &newpage->flags);
+	if(newpage)
+		set_bit(PG_nvram, &newpage->flags);
 
 	//page->flags = 0;
 	//printk(KERN_ALERT "__unmap_and_move: releasing page \n");
@@ -952,15 +952,28 @@ out:
 		 * restored.
 		 */
 		list_del(&page->lru);
+
+		if (PageReserved(page))
+			printk(KERN_ALERT "Releasing pages is reserved \n");
+
 		dec_zone_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
 		putback_lru_page(page);
 	}
+
+	//if (PageReserved(newpage))
+	//	printk(KERN_ALERT "Releasing newpage is reserved \n");
+
+
 	/*
 	 * Move the new page to the LRU. If migration was not successful
 	 * then this will free the page.
 	 */
+	if (PageReserved(newpage))
+		ClearPageReserved(newpage);
+
 	putback_lru_page(newpage);
+
 	if (result) {
 		if (rc)
 			*result = rc;
@@ -1237,16 +1250,6 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 		list_for_each_entry_safe(page, page2, from, lru) {
 			cond_resched();
 
-		  	/*if( (LRU_INACTIVE_ANON != page_lru_base_type(page))){
-					//printk(KERN_ALERT "page LRU_ACTIVE_ANON %u\n",nr_failed);
-	           		//printk(KERN_ALERT "page in LRU active list %u\n",
-					//	nr_failed);
-				rc = -1;
-            }else if(!PageLRU(page)) {
-					//printk(KERN_ALERT "page not LRU %u\n",nr_failed);
-					rc = -1;
-			}else */
-
 			if(!page){
 				printk(KERN_ALERT "migrate_pages: page for unmap_and_move is null\n");
 				continue;
@@ -1356,7 +1359,6 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 
 	struct page_to_node *pm = (struct page_to_node *)private;
 
-
 	if(!pm) {	
 		printk(KERN_ALERT "new_page_node: page to node failed \n");
 		return NULL;			
@@ -1367,20 +1369,9 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 		return NULL;
 	}	
 
-	/*while (pm->node != MAX_NUMNODES && pm->page != p)
-		pm++;
-
-	if (pm->node == MAX_NUMNODES)
-		return NULL;
-
-	*result = &pm->status;*/
-		
-	//printk(KERN_ALERT "new_page_node: Allocating page from %lu \n",private);
-
-
 #ifdef ENABLE_HETERO
-	page = alloc_page(GFP_HIGHUSER);
-	//page = hetero_getnxt_page(false);
+	//page = alloc_page(GFP_HIGHUSER);
+	page = hetero_getnxt_page(false);
 	if(!page){
 	    //goto page_error;
     	//nodeid = find_persistent_node();
@@ -2563,6 +2554,58 @@ int addifexist(unsigned long pfn, int idx){
 }
 #endif
 
+void print_all_conversion(struct vm_area_struct *vma, struct page *page){
+
+   struct page *vmapg=NULL;	
+   struct page *vmapgend=NULL;
+
+	//for (vma =current->mm->mmap; vma; vma = vma->vm_next) {
+
+	 pgd_t *pgd = pgd_offset(current->mm, vma->vm_start);
+	 pmd_t *pmd = pmd_offset(pgd, vma->vm_start);  
+	 pte_t *pte = pte_offset_map(pmd, vma->vm_start);  
+
+	 pgd_t *pgd1 = pgd_offset(current->mm, vma->vm_end);
+	 pmd_t *pmd1 = pmd_offset(pgd1, vma->vm_end);  
+	 pte_t *pte1 = pte_offset_map(pmd1, vma->vm_end);  
+
+		printk("page_to_pfn(page) %lu\n", page_to_pfn(page));
+		printk("kmap(page) %lu\n",kmap(page));
+		printk("vma->vm_start %lu\n",vma->vm_start);
+		printk("vma->vm_end %lu\n",vma->vm_end);
+		printk("vma->size %lu\n",vma->vm_end-vma->vm_start);
+
+		printk("virt_to_phys(vma->vm_start) %lu\n",virt_to_phys(vma->vm_start));
+
+    	//if (!pte_present(*pte)) 
+		vmapg = pte_page(*pte);
+
+	    //if (!pte_present(*pte)) 
+		vmapgend = pte_page(*pte1);
+
+		if(vmapg) {
+			printk("page_to_pfn(vmapg) %lu\n", page_to_pfn(vmapg));
+			printk("kmap(vmapg) %lu\n",kmap(vmapg));
+		}
+
+		if(vmapgend) {
+			printk("page_to_pfn(vmapgend) %lu\n", page_to_pfn(vmapgend));
+			printk("kmap(vmapgend) %lu\n",kmap(vmapgend));
+		}
+
+
+
+		printk("__pa(vma->vm_start) %lu\n",(unsigned long)__pa(vma->vm_start));
+		vmapg = (struct page*)PAGE_ALIGN(vma->vm_start);
+		if(vmapg){
+			printk("page_to_pfn(vmapg) %lu\n", page_to_pfn(vmapg));
+			 printk("kmap(vmapg) %lu\n",kmap(vmapg));	
+		}
+	//}
+		printk("****************************\n");
+	
+}
+
 
 /* Scan through pages checking if pages follow certain conditions. */
 static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
@@ -2596,16 +2639,14 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 		}*/
 		normalpg_dbg_count++;
 
-
-#ifndef ENABLE_HETERO
+//#ifndef ENABLE_HETERO
 		/*
 		 * vm_normal_page() filters out zero pages, but there might
 		 * still be PageReserved pages to skip, perhaps in a VDSO.
 		 */
 		if (PageReserved(page))
 			continue;
-#endif
-
+//#endif
 		nonrsrvpg_dbg_count++;
 
 #ifndef ENABLE_HETERO
@@ -2613,9 +2654,7 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 		if (node_isset(nid, *nodes) == !!(flags & MPOL_MF_INVERT))
 			continue;
 #endif
-
 		beforemigrate_dbg_count++;	
-
 
 #ifndef ENABLE_HETERO
 		if (flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)) {
@@ -2626,16 +2665,17 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
          }else {
              continue;
          }
-
+		 //print_all_conversion(vma, page);
 		 if(page->nvdirty == PAGE_MIGRATED) {
 			dup_hot_page++;  
 			continue;
 		  }	
-			/*page has been already added to the dirty list*/
-			page->nvdirty=PAGE_MIGRATED;
 
-			/*unique hot pages detected*/
-			pageinhotlist++;
+		  /*page has been already added to the dirty list*/
+		 page->nvdirty=PAGE_MIGRATED;
+
+		 /*unique hot pages detected*/
+		 pageinhotlist++;
 
 #if 0
 			pageinhotlist++;
@@ -2798,6 +2838,41 @@ void print_all_vmas() {
 	}
 }
 
+static int migrate_hot_pages(struct page *page, void *private, int flags)
+{
+	pg_debug_count++;
+
+	if (!page)
+		return -1;
+
+	normalpg_dbg_count++;
+
+	/*
+	 * vm_normal_page() filters out zero pages, but there might
+	 * still be PageReserved pages to skip, perhaps in a VDSO.
+	 */
+	if (PageReserved(page))
+		return -1;
+
+	nonrsrvpg_dbg_count++;
+
+	 //print_all_conversion(vma, page);
+	 if(page->nvdirty == PAGE_MIGRATED) {
+		dup_hot_page++;  
+		return -1;
+	  }	
+
+	  /*page has been already added to the dirty list*/
+	 page->nvdirty=PAGE_MIGRATED;
+
+	 /*unique hot pages detected*/
+	 pageinhotlist++;
+
+	 //migrate_page_add(page, private, flags);
+
+	return 0;
+}
+
 
 
 
@@ -2806,7 +2881,7 @@ void print_all_vmas() {
  */
 //static int show_numa_map(unsigned long start)
 //SYSCALL_DEFINE1(move_inactpages, unsigned long, start)
-asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateattmpt)
+asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 {
 
 	struct vm_area_struct * vma;
@@ -2820,29 +2895,32 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 	unsigned int hotpgcnt=0;
 	xen_pfn_t *hot_frame_list;
 	nodemask_t nmask;
-	LIST_HEAD(pagelist);
 
 	//unsigned long migratetot=0;
-	//unsigned int cntr=0; 
+	unsigned int cntr=0; 
 	//unsigned long startpfn=0, endpfn=0;	
 	//print_all_vmas();
 	//return 0;
 
-    if (migrateattmpt == 0) {
+	
+    if (flag == HETERO_STATS) {
 		//pg_debug_count = 0;
     	//beforemigrate_dbg_count=0;
 		//nonrsrvpg_dbg_count=0;
  		//normalpg_dbg_count=0;
  		//pg_debug_count=0;
 		//nr_migrate_success=0;
-		//return 0;
-	}	
+		printk(KERN_ALERT "MIGRATE COUNT %u: \n",
+					nr_migrate_success);
+		return nr_migrate_success;
+	}
 
+	LIST_HEAD(pagelist);
 	//printk("sys_move_inactpages: calling get_hotpage_list \n");
 	if (!mm)
 		return 0;
 
-	if(!migrateattmpt) {
+	if(!flag) {
 		printk(KERN_ALERT "sys_move_inactpages: invalid migration size \n");
 	}
 
@@ -2859,13 +2937,44 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
      */
     VM_BUG_ON(!(flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)));
 
-#if 1
 	hot_frame_list = get_hotpage_list(&hotpgcnt);
  	if(!hotpgcnt || !hot_frame_list) {
 		return 0;
 	}
 
-	 for (vma = mm->mmap; vma; vma = vma->vm_next) {
+#if 0
+	//hotpgcnt =10;
+	for (cntr=0; cntr < hotpgcnt; cntr++){
+
+    	unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
+	    struct page *page = pfn_to_page(pfn);
+
+    	if(!page) continue;
+
+		flags = flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK;
+		migrate_hot_pages(page, &pagelist,flags);
+
+	}
+
+	/*if (!list_empty(&pagelist)) {
+
+	   printk(KERN_ALERT "calling migration \n");
+       err = my_migrate_pages(&pagelist, new_page_node, dest,
+                               MIGRATE_SYNC, MR_SYSCALL);
+        if (err) {
+          putback_lru_pages(&pagelist);
+	    }else {
+
+  	  	}
+	}*/
+	 printk(KERN_ALERT "sys_move_inactpages: %u out of %u, "
+               "pageinhotlist %u, dup_hot_page %u\n",
+              nr_migrate_success,size, 
+			  pageinhotlist, dup_hot_page);
+	return 0;
+#endif
+
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
 
 	    if (!vma)
 	      goto out_plug;
@@ -2873,7 +2982,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 		start = vma->vm_start;
 		end = vma->vm_end;
 #if 0	
-	while(migratetot < migrateattmpt) {
+	while(migratetot < flag) {
 
 	//vma = find_vma(current->mm, start);
 	if(vma) {
@@ -2892,27 +3001,21 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 	//		" start %lu, end %lu, size %lu\n", start,end, end-start);
     check_node_range(mm, start, end, &nmask,
                     flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &pagelist);
-	/*printk("sys_move_inactpages: after check_node_range pg_debug_count %u, "
-			"nonrsrvpg_dbg_count %u, beforemigrate_dbg_count %u, "
-			"normalpg_dbg_count %u\n", pg_debug_count, nonrsrvpg_dbg_count, 
-			 beforemigrate_dbg_count, normalpg_dbg_count);*/
 
   	  if (!list_empty(&pagelist)) {
-			printk("sys_move_inactpages: calling migrate_pages function \n");
             err = my_migrate_pages(&pagelist, new_page_node, dest,
                                     MIGRATE_SYNC, MR_SYSCALL);
             if (err)
-                    putback_lru_pages(&pagelist);
+              putback_lru_pages(&pagelist);
     	}else {
-			printk("sys_move_inactpages: pagelist empty \n");
 		}
-		//start = start + end-start;
 	 }
+
 	 printk(KERN_ALERT "sys_move_inactpages: %u out of %u, "
                "pageinhotlist %u, dup_hot_page %u\n",
               nr_migrate_success,size, 
 			  pageinhotlist, dup_hot_page);
-#endif
+
 
 #ifdef SELECTIVE_HETERO_SCAN
 	for (vma = mm->mmap; vma; vma = vma->vm_next) {
