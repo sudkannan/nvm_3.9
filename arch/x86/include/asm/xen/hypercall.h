@@ -465,6 +465,12 @@ HYPERVISOR_tmem_op(
 	return _hypercall1(int, tmem_op, op);
 }
 
+static inline int
+HYPERVISOR_hypertest(int dummy)
+{
+	return _hypercall1(int, hypertest, dummy);
+}
+
 static inline void
 MULTI_fpu_taskswitch(struct multicall_entry *mcl, int set)
 {
