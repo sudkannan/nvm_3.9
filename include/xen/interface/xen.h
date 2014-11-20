@@ -58,7 +58,8 @@
 #define __HYPERVISOR_physdev_op           33
 #define __HYPERVISOR_hvm_op               34
 #define __HYPERVISOR_tmem_op              38
-#define __HYPERVISOR_hypertest            44
+#define __HYPERVISOR_hsm_get_page         44
+#define __HYPERVISOR_hsm_free_page        45
 
 /* Architecture-specific hypercall definitions. */
 #define __HYPERVISOR_arch_0               48

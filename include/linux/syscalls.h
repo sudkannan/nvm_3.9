@@ -941,6 +941,7 @@ asmlinkage long sys_copydirtpages(
 asmlinkage long sys_move_inactpages(unsigned long start,  unsigned long migsize);
 //NVM Changes
 
-asmlinkage long sys_hello(void);
+asmlinkage long sys_hsm_alloc(void);
+asmlinkage long sys_hsm_free(void);
 
 #endif
