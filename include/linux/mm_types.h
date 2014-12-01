@@ -173,6 +173,10 @@ struct page {
 	 */
 	void *shadow;
 #endif
+
+	/*HETEROCHANGES*/
+	void *vma_ref;
+
    /*NVRAM CHANGES*/
    /*process and vma to which the page was associated with*/
    //unsigned long proc_id;
