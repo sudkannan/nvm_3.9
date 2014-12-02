@@ -10,10 +10,10 @@
 
 CC=/usr/lib/ccache/bin/gcc make -j15
 CC=/usr/lib/ccache/bin/gcc make bzImage -j15
-CC=/usr/lib/ccache/bin/gcc make  modules -j15
-CC=/usr/lib/ccache/bin/gcc make  modules_install -j15
+#CC=/usr/lib/ccache/bin/gcc make  modules -j15
+#CC=/usr/lib/ccache/bin/gcc make  modules_install -j15
 
- y="3.9.0"	
+ y="3.9.0+"	
    if [[ x$ == x ]];
   then
       echo You have to say a version!

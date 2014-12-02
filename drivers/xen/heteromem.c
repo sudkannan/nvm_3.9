@@ -82,6 +82,7 @@ Also all code related to hotplug has been removed */
 #define XENMEMF_hetero_stop_hotpage_scan (1<<19)
 
 #define MAX_HOT_MFN 16384
+#define MAX_MIGRATE 8192
 
 /*
  * heteromem_process() state:
@@ -347,7 +348,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		//ClearPageReserved(page);
 		//init_page_count(page);
 		//__free_page(page);
-		//SetPageReserved(page);	
+		SetPageReserved(page);	
 
 		list_add(&page->lru, &hetero_ready_lst_pgs);
 		ready_lst_pgcnt++;
@@ -620,6 +621,10 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 		 }
 		}
 #endif
+
+		if(ret > MAX_MIGRATE)
+			ret = MAX_MIGRATE;
+
 		hotpagecnt = ret;	
 
 		*hotcnt = ret;

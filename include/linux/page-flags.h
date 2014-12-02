@@ -114,7 +114,7 @@ enum pageflags {
 
 	//NVRAM Changes
 	PG_nvram,
-
+	PG_hetero,
 
 	/* Filesystems */
 	PG_checked = PG_owner_priv_1,

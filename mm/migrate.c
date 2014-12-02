@@ -55,8 +55,28 @@
 #define HETERO_SKIPLIST_LEN 1024*512
 //#define SELECTIVE_HETERO_SCAN
 #define PAGE_MIGRATED 2
+#define HETERO_PRINT_STATS 0
+#define HOT_MIN_MIG_LIMIT 50
+#define DEBUG_TIMER
+#define HETEROSTATS
 
+#ifdef DEBUG_TIMER
+unsigned long tot_mig_time;
+unsigned long tot_pgwalk_time;
+unsigned long tot_hypercall_time;
+#endif
 
+#ifdef HETEROSTATS
+#define MAXVMA 40
+unsigned long vma_list[MAXVMA];
+unsigned long vma_hotpgcnt[MAXVMA];
+unsigned int vmacntr;
+static unsigned int num_migrated;
+/*Xen reported hot pages*/
+static unsigned int stat_xen_hot_pages;
+static unsigned int stat_tot_proc_pages;
+
+#endif
 
 /* Internal flags */
 #define MPOL_MF_DISCONTIG_OK (MPOL_MF_INTERNAL << 0)    /* Skip checks for continuous vmas */
@@ -93,11 +113,12 @@ unsigned int  normalpg_dbg_count;
 unsigned int pg_debug_count;
 unsigned int pageinhotlist;
 unsigned int dup_hot_page;
-
-
 unsigned long debug_pfn[4096];
 unsigned long debug_pfn_cnt[4096];
 
+#ifdef HETEROSTATS
+int do_complete_page_walk();
+#endif
 
 /*
  * migrate_prep() needs to be called before we start compiling a list of pages
@@ -952,15 +973,28 @@ out:
 		 * restored.
 		 */
 		list_del(&page->lru);
+
+		if (PageReserved(page))
+			printk(KERN_ALERT "Releasing pages is reserved \n");
+
 		dec_zone_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
 		putback_lru_page(page);
 	}
+
+	//if (PageReserved(newpage))
+	//	printk(KERN_ALERT "Releasing newpage is reserved \n");
+
+
 	/*
 	 * Move the new page to the LRU. If migration was not successful
 	 * then this will free the page.
 	 */
+	//if (PageReserved(newpage))
+	//	ClearPageReserved(newpage);
+
 	putback_lru_page(newpage);
+
 	if (result) {
 		if (rc)
 			*result = rc;
@@ -1235,22 +1269,15 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 		retry = 0;
 
 		list_for_each_entry_safe(page, page2, from, lru) {
-			cond_resched();
 
-		  	/*if( (LRU_INACTIVE_ANON != page_lru_base_type(page))){
-					//printk(KERN_ALERT "page LRU_ACTIVE_ANON %u\n",nr_failed);
-	           		//printk(KERN_ALERT "page in LRU active list %u\n",
-					//	nr_failed);
-				rc = -1;
-            }else if(!PageLRU(page)) {
-					//printk(KERN_ALERT "page not LRU %u\n",nr_failed);
-					rc = -1;
-			}else */
+			cond_resched();
 
 			if(!page){
 				printk(KERN_ALERT "migrate_pages: page for unmap_and_move is null\n");
 				continue;
 			}
+
+			
 
 			rc = unmap_and_move(get_new_page, private,
 						page, pass > 2, mode);
@@ -1356,7 +1383,6 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 
 	struct page_to_node *pm = (struct page_to_node *)private;
 
-
 	if(!pm) {	
 		printk(KERN_ALERT "new_page_node: page to node failed \n");
 		return NULL;			
@@ -1367,33 +1393,20 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 		return NULL;
 	}	
 
-	/*while (pm->node != MAX_NUMNODES && pm->page != p)
-		pm++;
-
-	if (pm->node == MAX_NUMNODES)
-		return NULL;
-
-	*result = &pm->status;*/
-		
-	//printk(KERN_ALERT "new_page_node: Allocating page from %lu \n",private);
-
-
 #ifdef ENABLE_HETERO
-	page = alloc_page(GFP_HIGHUSER);
-	//page = hetero_getnxt_page(false);
+#if 0
+	//page = alloc_page(GFP_HIGHUSER);
+#else
+	page = hetero_getnxt_page(false);
 	if(!page){
-	    //goto page_error;
-    	//nodeid = find_persistent_node();
-	    //page = nv_alloc_fresh_page_node(nodeid,PAGE_SIZE);
-    	if(!page) {
         	return NULL;
 			printk(KERN_ALERT "new_page_node: getting heteropage FAILED \n");
-	    }       
 	}else{
 		//printk(KERN_ALERT "new_page_node: getting heteropage succeeded \n");
 		//page->flags = page->flags | PG_nvram;
-		//set_bit(PG_nvram, &page->flags);
+		set_bit(PG_hetero, &page->flags);
 	} 
+#endif
 	return page;
   
 #else
@@ -2563,12 +2576,120 @@ int addifexist(unsigned long pfn, int idx){
 }
 #endif
 
+void print_all_conversion(struct vm_area_struct *vma, struct page *page){
+
+   struct page *vmapg=NULL;	
+   struct page *vmapgend=NULL;
+
+	//for (vma =current->mm->mmap; vma; vma = vma->vm_next) {
+
+	 pgd_t *pgd = pgd_offset(current->mm, vma->vm_start);
+	 pmd_t *pmd = pmd_offset(pgd, vma->vm_start);  
+	 pte_t *pte = pte_offset_map(pmd, vma->vm_start);  
+
+	 pgd_t *pgd1 = pgd_offset(current->mm, vma->vm_end);
+	 pmd_t *pmd1 = pmd_offset(pgd1, vma->vm_end);  
+	 pte_t *pte1 = pte_offset_map(pmd1, vma->vm_end);  
+
+		printk("page_to_pfn(page) %lu\n", page_to_pfn(page));
+		printk("kmap(page) %lu\n",kmap(page));
+		printk("vma->vm_start %lu\n",vma->vm_start);
+		printk("vma->vm_end %lu\n",vma->vm_end);
+		printk("vma->size %lu\n",vma->vm_end-vma->vm_start);
+
+		printk("virt_to_phys(vma->vm_start) %lu\n",virt_to_phys(vma->vm_start));
+
+    	//if (!pte_present(*pte)) 
+		vmapg = pte_page(*pte);
+
+	    //if (!pte_present(*pte)) 
+		vmapgend = pte_page(*pte1);
+
+		if(vmapg) {
+			printk("page_to_pfn(vmapg) %lu\n", page_to_pfn(vmapg));
+			printk("kmap(vmapg) %lu\n",kmap(vmapg));
+		}
+
+		if(vmapgend) {
+			printk("page_to_pfn(vmapgend) %lu\n", page_to_pfn(vmapgend));
+			printk("kmap(vmapgend) %lu\n",kmap(vmapgend));
+		}
+
+
+
+		printk("__pa(vma->vm_start) %lu\n",(unsigned long)__pa(vma->vm_start));
+		vmapg = (struct page*)PAGE_ALIGN(vma->vm_start);
+		if(vmapg){
+			printk("page_to_pfn(vmapg) %lu\n", page_to_pfn(vmapg));
+			 printk("kmap(vmapg) %lu\n",kmap(vmapg));	
+		}
+	//}
+		printk("****************************\n");
+	
+}
+
+
+#ifdef HETEROSTATS
+int hetero_stats_addvmapg(struct vm_area_struct *vma, struct page *page){
+
+	int cntr=0;
+
+	for (cntr =0; cntr < vmacntr; cntr++) {
+
+		struct vm_area_struct *vmatmp;		
+		vmatmp = (struct vm_area_struct *)vma_list[cntr];
+
+		if(vmatmp == vma) {
+			vma_hotpgcnt[cntr]++;	
+			return 0;
+		}
+	}
+	return -1;
+}
+
+void hetero_print_vmastats(){
+
+    int cntr=0;
+
+	printk(KERN_ALERT "*****************\n");
+
+    for (cntr =0; cntr < vmacntr; cntr++) {
+	
+		struct vm_area_struct *vmatmp;		
+		vmatmp = (struct vm_area_struct *)vma_list[cntr];
+   	
+        printk(KERN_ALERT
+               "\nvma[%d] vm_start %lu vm_end %lu "
+			   "flag: %c%c%c%c%c%c  hotpagecnt %lu ", /// 0x%08lx000 ",
+               cntr,
+               (unsigned long)vmatmp->vm_start, (unsigned long)vmatmp->vm_end,
+               vmatmp->vm_flags & VM_READ ? 'r' : '-',
+               vmatmp->vm_flags & VM_WRITE ? 'w' : '-',
+               vmatmp->vm_flags & VM_EXEC ? 'x' : '-',
+               vmatmp->vm_flags & VM_MAYSHARE ? 's' : 'p',
+               vmatmp->vm_flags & VM_LOCKED ? 'l' : '-',
+               vmatmp->vm_flags & VM_IO ? 'i' : '-',
+			   vma_hotpgcnt[cntr]);
+               //vmatmp->vm_pgoff);
+    }
+	
+	printk(KERN_ALERT "Hypervisor reported "
+			"Num. hot pages %u\n",stat_xen_hot_pages);
+
+	
+					
+
+	printk(KERN_ALERT "*****************\n");
+}
+#endif
+
+
 
 /* Scan through pages checking if pages follow certain conditions. */
 static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 		unsigned long addr, unsigned long end,
 		const nodemask_t *nodes, unsigned long flags,
-		void *private)
+		void *private, int addtolist)
 {
 	pte_t *orig_pte;
 	pte_t *pte;
@@ -2576,11 +2697,10 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 
 	orig_pte = pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
 	do {
-
 		pg_debug_count++;
 
 		struct page *page;
-		int nid;
+		//int nid;
 
 		if (!pte_present(*pte))
 			continue;
@@ -2589,34 +2709,27 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 		if (!page)
 			continue;
 
-		//printk(KERN_ALERT "page_to_pfn(page) %lu \n",page_to_pfn(page));
-		/*if(page->nvpgoff != vma->vm_start) {
-			page->nvpgoff = vma->vm_start;
-			continue;
-		}*/
+#ifdef HETEROSTATS
 		normalpg_dbg_count++;
+		stat_tot_proc_pages++;
+#endif		
 
-
-#ifndef ENABLE_HETERO
 		/*
 		 * vm_normal_page() filters out zero pages, but there might
 		 * still be PageReserved pages to skip, perhaps in a VDSO.
 		 */
 		if (PageReserved(page))
 			continue;
-#endif
-
-		nonrsrvpg_dbg_count++;
 
 #ifndef ENABLE_HETERO
+		nonrsrvpg_dbg_count++;
 		nid = page_to_nid(page);
 		if (node_isset(nid, *nodes) == !!(flags & MPOL_MF_INVERT))
 			continue;
-#endif
 
 		beforemigrate_dbg_count++;	
-
-
+#endif
+		
 #ifndef ENABLE_HETERO
 		if (flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)) {
 #endif
@@ -2626,31 +2739,22 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
          }else {
              continue;
          }
-
+		 //print_all_conversion(vma, page);
 		 if(page->nvdirty == PAGE_MIGRATED) {
 			dup_hot_page++;  
 			continue;
 		  }	
-			/*page has been already added to the dirty list*/
-			page->nvdirty=PAGE_MIGRATED;
 
-			/*unique hot pages detected*/
-			pageinhotlist++;
+		  /*page has been already added to the dirty list*/
+		 page->nvdirty=PAGE_MIGRATED;
 
-#if 0
-			pageinhotlist++;
-			unsigned long pfn = page_to_pfn(page);
-			int idx = checkifexist(pfn);	
-			if(idx == -1) {
-				adddebugpfn(pfn);
-			}else {
-				//printk(KERN_ALERT "check_pte_range, pfn %lu \n",pfn);
-				addifexist(pfn, idx);
-				continue;	
-			}
+#ifdef HETEROSTATS
+		 /*unique hot pages detected*/
+		 pageinhotlist++;
+		hetero_stats_addvmapg(vma, page);
 #endif
-		//printk(KERN_ALERT "pageinhotlist %u\n",  pageinhotlist);	
-		migrate_page_add(page, private, flags);
+		if(addtolist)
+			migrate_page_add(page, private, flags);
 
 #ifndef ENABLE_HETERO
 		}
@@ -2669,7 +2773,7 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 static inline int check_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 		unsigned long addr, unsigned long end,
 		const nodemask_t *nodes, unsigned long flags,
-		void *private)
+		void *private, int addtolist)
 {
 	pmd_t *pmd;
 	unsigned long next;
@@ -2681,7 +2785,7 @@ static inline int check_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 		if (pmd_none_or_trans_huge_or_clear_bad(pmd))
 			continue;
 		if (check_pte_range(vma, pmd, addr, next, nodes,
-				    flags, private))
+				    flags, private, addtolist))
 			return -EIO;
 	} while (pmd++, addr = next, addr != end);
 	return 0;
@@ -2690,7 +2794,7 @@ static inline int check_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 static inline int check_pud_range(struct vm_area_struct *vma, pgd_t *pgd,
 		unsigned long addr, unsigned long end,
 		const nodemask_t *nodes, unsigned long flags,
-		void *private)
+		void *private, int addtolist)
 {
 	pud_t *pud;
 	unsigned long next;
@@ -2701,7 +2805,7 @@ static inline int check_pud_range(struct vm_area_struct *vma, pgd_t *pgd,
 		if (pud_none_or_clear_bad(pud))
 			continue;
 		if (check_pmd_range(vma, pud, addr, next, nodes,
-				    flags, private))
+				    flags, private, addtolist))
 			return -EIO;
 	} while (pud++, addr = next, addr != end);
 	return 0;
@@ -2710,7 +2814,7 @@ static inline int check_pud_range(struct vm_area_struct *vma, pgd_t *pgd,
 static inline int check_pgd_range(struct vm_area_struct *vma,
 		unsigned long addr, unsigned long end,
 		const nodemask_t *nodes, unsigned long flags,
-		void *private)
+		void *private, int addtolist)
 {
 	pgd_t *pgd;
 	unsigned long next;
@@ -2721,7 +2825,7 @@ static inline int check_pgd_range(struct vm_area_struct *vma,
 		if (pgd_none_or_clear_bad(pgd))
 			continue;
 		if (check_pud_range(vma, pgd, addr, next, nodes,
-				    flags, private))
+				    flags, private, addtolist))
 			return -EIO;
 	} while (pgd++, addr = next, addr != end);
 	return 0;
@@ -2734,7 +2838,8 @@ static inline int check_pgd_range(struct vm_area_struct *vma,
  */
 static struct vm_area_struct *
 check_node_range(struct mm_struct *mm, unsigned long start, unsigned long end,
-                const nodemask_t *nodes, unsigned long flags, void *private)
+                const nodemask_t *nodes, unsigned long flags, void *private,
+				int addtolist)
 {
         int err;
         struct vm_area_struct *first, *vma, *prev;
@@ -2772,7 +2877,7 @@ check_node_range(struct mm_struct *mm, unsigned long start, unsigned long end,
                       vma_migratable(vma))) {
 
                         err = check_pgd_range(vma, start, endvma, nodes,
-                                                flags, private);
+                                                flags, private, addtolist);
                         if (err) {
                                 first = ERR_PTR(err);
                                 break;
@@ -2785,6 +2890,7 @@ next:
 }
 
 
+#if 0
 void print_all_vmas() {
 
 	struct vm_area_struct *vma;
@@ -2797,21 +2903,167 @@ void print_all_vmas() {
   	    	vma->vm_start, vma->vm_end);
 	}
 }
+#endif
 
 
 
+/*
+ */
+static int check_vma_exists(struct page *new, struct vm_area_struct *vma,
+                 unsigned long addr, void *private)
+{
+
+	//struct mm_struct *mm;
+	int flags = MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK;
+
+	if(vma){
+
+		if(vma->vm_mm == current->mm){
+			//printk(KERN_ALERT "valid page \n");
+			migrate_page_add(new, private, flags);	
+			return 1;
+		}
+		else{
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
+static int find_page_vma(struct page *new, void *private)
+{
+    return 	rmap_walk(new, check_vma_exists, private);
+}
+
+
+
+static int migrate_hot_pages(struct page *page, void *private, int flags)
+{
+	pg_debug_count++;
+
+	if (!page)
+		return -1;
+
+	normalpg_dbg_count++;
+
+	/*
+	 * vm_normal_page() filters out zero pages, but there might
+	 * still be PageReserved pages to skip, perhaps in a VDSO.
+	 */
+	if (PageReserved(page))
+		return -1;
+
+	nonrsrvpg_dbg_count++;
+
+	 //print_all_conversion(vma, page);
+	 if(page->nvdirty == PAGE_MIGRATED) {
+		dup_hot_page++;  
+		return -1;
+	  }	
+
+	 /*page has been already added to the dirty list*/
+	 page->nvdirty=PAGE_MIGRATED;
+
+	 /*unique hot pages detected*/
+	 pageinhotlist++;
+
+
+	 if(!find_page_vma(page, private)){
+		return -1;
+	 } 	
+	return 0;
+}
+
+
+#ifdef HETEROSTATS
+int do_complete_page_walk() {
+
+	struct vm_area_struct * vma;
+	struct mm_struct *mm = current->mm;
+	unsigned long end=0;
+	unsigned long start=0;
+	int source =0;
+	int flags=0;
+	nodemask_t nmask;
+	LIST_HEAD(walklist);	
+
+	stat_tot_proc_pages=0;
+
+	nodes_clear(nmask);
+	node_set(source, nmask);
+
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
+
+	  if (!vma)
+         return -1;
+
+	 start = vma->vm_start;
+	 end = vma->vm_end;	
+		
+	 if(end < start)
+		return -1;
+
+	  check_node_range(mm, start, end, &nmask,
+    	  flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &walklist, 0);
+	}
+	return 0;
+}
+#endif
+
+
+
+
+
+#ifdef DEBUG_TIMER
+long simulation_time(struct timespec start, struct timespec end)
+{
+	long current_time;
+		
+	current_time = ((end.tv_sec * 1000000000 + end.tv_nsec) -
+						(start.tv_sec *1000000000 + start.tv_nsec));
+	return current_time;
+
+}
+#endif
+
+int hetero_filter(struct vm_area_struct * vmatmp){
+
+	 //char c;
+	/*if(vmatmp->vm_flags & VM_EXEC)
+		c ='x';
+	else
+		c ='-';*/
+
+	 /*Executable*/	
+	if(vmatmp && (vmatmp->vm_flags & VM_EXEC)) {
+		//printk(KERN_ALERT "vmatmp->vm_flags & VM_EXEC %c\n", c);
+		return 1;
+	}
+
+	 /*Read only*/
+	if(vmatmp && (vmatmp->vm_flags & VM_READ) && !(vmatmp->vm_flags & VM_WRITE))
+		return 1;
+
+
+	 /*I/O specific*/	
+	 if(vmatmp->vm_flags & VM_IO)
+		return 1;	
+
+	 return 0;
+}
 
 /*
  * Display pages allocated per node and memory policy via /proc.
  */
 //static int show_numa_map(unsigned long start)
 //SYSCALL_DEFINE1(move_inactpages, unsigned long, start)
-asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateattmpt)
+asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 {
 
-	struct vm_area_struct * vma;
+	//struct vm_area_struct * vma;
 	struct mm_struct *mm = current->mm;
-	unsigned long end=0;
+	//unsigned long end=0;
 	int source =0;
 	int dest=1;
 	int flags=0;
@@ -2820,29 +3072,36 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 	unsigned int hotpgcnt=0;
 	xen_pfn_t *hot_frame_list;
 	nodemask_t nmask;
-	LIST_HEAD(pagelist);
+    LIST_HEAD(pagelist);
 
 	//unsigned long migratetot=0;
-	//unsigned int cntr=0; 
+	unsigned int cntr=0; 
 	//unsigned long startpfn=0, endpfn=0;	
 	//print_all_vmas();
 	//return 0;
-
-    if (migrateattmpt == 0) {
+#ifdef DEBUG_TIMER
+	unsigned long temp_time = 0;
+	struct timespec start_mig_time, end_mig_time;
+	struct timespec start_pgwalk, end_pgwalk;
+	struct timespec start_hyercall,end_hyercall;
+#endif //DEBUG_TIMER
+	
+    if (flag == HETERO_PRINT_STATS) {
 		//pg_debug_count = 0;
     	//beforemigrate_dbg_count=0;
 		//nonrsrvpg_dbg_count=0;
  		//normalpg_dbg_count=0;
  		//pg_debug_count=0;
 		//nr_migrate_success=0;
-		//return 0;
-	}	
+		printk(KERN_ALERT "MIGRATE COUNT %u: \n",
+					nr_migrate_success);
+		return nr_migrate_success;
+	}
 
-	//printk("sys_move_inactpages: calling get_hotpage_list \n");
 	if (!mm)
 		return 0;
 
-	if(!migrateattmpt) {
+	if(!flag) {
 		printk(KERN_ALERT "sys_move_inactpages: invalid migration size \n");
 	}
 
@@ -2851,7 +3110,6 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 	init_hetero_list_fn();
     nodes_clear(nmask);
     node_set(source, nmask);
-
     /*
      * This does not "check" the range but isolates all pages that
      * need migration.  Between passing in the full user address
@@ -2859,21 +3117,116 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
      */
     VM_BUG_ON(!(flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)));
 
-#if 1
+#ifdef DEBUG_TIMER
+        getnstimeofday (&start_hyercall);
+#endif
+
+#ifdef HETEROSTATS
+        vmacntr=0;
+#endif	
+
 	hot_frame_list = get_hotpage_list(&hotpgcnt);
- 	if(!hotpgcnt || !hot_frame_list) {
+ 	if(!hotpgcnt || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
 	}
 
-	 for (vma = mm->mmap; vma; vma = vma->vm_next) {
+#ifdef HETEROSTATS
+		stat_xen_hot_pages = stat_xen_hot_pages + hotpgcnt;
+#endif	
+
+
+#ifdef DEBUG_TIMER
+		temp_time = 0;
+        getnstimeofday (&end_hyercall);
+        temp_time = simulation_time(start_hyercall,end_hyercall);
+        tot_hypercall_time = tot_hypercall_time + temp_time;
+#endif
+
+#ifdef DEBUG_TIMER
+        getnstimeofday (&start_pgwalk);
+#endif	
+
+#if 1
+	for (cntr=0; cntr < hotpgcnt; cntr++){
+
+    	unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
+	    struct page *page = pfn_to_page(pfn);
+
+    	if(!page) continue;
+
+		flags = flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK;
+		migrate_hot_pages(page, &pagelist,flags);
+	}
+
+#ifdef DEBUG_TIMER
+        temp_time=0;
+        getnstimeofday (&end_pgwalk);
+        temp_time = simulation_time(start_pgwalk,end_pgwalk);
+        tot_pgwalk_time = tot_pgwalk_time + temp_time;
+#endif
+
+#ifdef DEBUG_TIMER
+    getnstimeofday (&start_mig_time);
+#endif
+
+	if (!list_empty(&pagelist)) {
+
+	   /*printk(KERN_ALERT "calling migration \n");*/
+       err = my_migrate_pages(&pagelist, new_page_node, dest,
+                               MIGRATE_SYNC, MR_SYSCALL);
+        if (err) {
+          putback_lru_pages(&pagelist);
+	    }else {
+
+  	  	}
+	}
+
+#ifdef DEBUG_TIMER
+    temp_time = 0;
+    getnstimeofday (&end_mig_time);
+    temp_time = simulation_time(start_mig_time,end_mig_time);
+    tot_mig_time = tot_mig_time + temp_time;
+    printk("tot_mig_time %lu \n",tot_mig_time);
+    printk("tot_pgwalk_time %lu \n", tot_pgwalk_time);
+#endif
+
+#ifdef HETEROSTATS
+    if(num_migrated < nr_migrate_success){
+        hetero_print_vmastats();
+        num_migrated = nr_migrate_success;
+		//do_complete_page_walk();
+    }
+	printk(KERN_ALERT "sys_move_inactpages: %u out of %u, "
+              	"pageinhotlist %u, dup_hot_page %u "
+			 	"Total Proc Page %u \n",
+              	nr_migrate_success,size, 
+			  	pageinhotlist, dup_hot_page,
+				stat_tot_proc_pages);
+#endif
+
+	return 0;
+#endif
+
+#if 0
+	for (vma = mm->mmap; vma; vma = vma->vm_next) {
 
 	    if (!vma)
 	      goto out_plug;
 
 		start = vma->vm_start;
 		end = vma->vm_end;
+
+		//filter vmas to optimize page walks	
+		if(hetero_filter(vma))
+			continue;	
+
+#ifdef HETEROSTATS
+		 vma_list[vmacntr]= (unsigned long)vma;
+		 vmacntr++;
+#endif
+
 #if 0	
-	while(migratetot < migrateattmpt) {
+	while(migratetot < flag) {
 
 	//vma = find_vma(current->mm, start);
 	if(vma) {
@@ -2892,22 +3245,41 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 	//		" start %lu, end %lu, size %lu\n", start,end, end-start);
     check_node_range(mm, start, end, &nmask,
                     flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &pagelist);
-	/*printk("sys_move_inactpages: after check_node_range pg_debug_count %u, "
-			"nonrsrvpg_dbg_count %u, beforemigrate_dbg_count %u, "
-			"normalpg_dbg_count %u\n", pg_debug_count, nonrsrvpg_dbg_count, 
-			 beforemigrate_dbg_count, normalpg_dbg_count);*/
 
+#ifdef DEBUG_TIMER
+		temp_time=0;
+	    getnstimeofday (&end_pgwalk);
+		temp_time = simulation_time(start_pgwalk,end_pgwalk);
+		tot_pgwalk_time = tot_pgwalk_time + temp_time;
+#endif
+
+#ifdef DEBUG_TIMER
+	getnstimeofday (&start_mig_time);
+#endif
   	  if (!list_empty(&pagelist)) {
-			printk("sys_move_inactpages: calling migrate_pages function \n");
             err = my_migrate_pages(&pagelist, new_page_node, dest,
                                     MIGRATE_SYNC, MR_SYSCALL);
             if (err)
-                    putback_lru_pages(&pagelist);
+              putback_lru_pages(&pagelist);
     	}else {
-			printk("sys_move_inactpages: pagelist empty \n");
 		}
-		//start = start + end-start;
 	 }
+#ifdef DEBUG_TIMER
+	temp_time = 0;	
+	getnstimeofday (&end_mig_time);
+	temp_time = simulation_time(start_mig_time,end_mig_time);
+	tot_mig_time = tot_mig_time + temp_time;
+	printk("tot_mig_time %lu \n",tot_mig_time);
+	printk("tot_pgwalk_time %lu \n", tot_pgwalk_time);
+#endif
+
+#ifdef HETEROSTATS
+	if(num_migrated < nr_migrate_success){
+		hetero_print_vmastats();
+		num_migrated = nr_migrate_success;
+	}
+#endif
+
 	 printk(KERN_ALERT "sys_move_inactpages: %u out of %u, "
                "pageinhotlist %u, dup_hot_page %u\n",
               nr_migrate_success,size, 
@@ -2926,7 +3298,6 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 		 if(end < start)
 			goto out_plug;
 
-		 
 		  check_node_range(mm, start, end, &nmask,
     			  flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &pagelist);
 	}
@@ -2962,7 +3333,8 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long migrateat
 
 check_migrate:		 
 		  check_node_range(mm, vma->vm_start, vma->vm_end, &nmask,
-    			  flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &pagelist);
+    			  flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, 
+				  &pagelist, 1);
 
 #ifdef HETERODEBUG
 		  printk(KERN_ALERT "sys_move_inactpages: after check_node_range pg_debug_count %u, "
@@ -2987,8 +3359,6 @@ check_migrate:
 
     }
 #endif
-
-out_plug:
 
 #ifdef ENABLE_HETERO
 	return nr_heteropgcnt;

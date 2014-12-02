@@ -10,7 +10,6 @@ make[1]: Nothing to be done for `relocs'.
   CALL    scripts/checksyscalls.sh
   HOSTLD  scripts/mod/modpost
   CHK     include/generated/compile.h
-  SKIPPED include/generated/compile.h
   PASYMS  arch/x86/realmode/rm/pasyms.h
   LDS     arch/x86/realmode/rm/realmode.lds
   LD      arch/x86/realmode/rm/realmode.elf
@@ -24,310 +23,144 @@ make[1]: Nothing to be done for `relocs'.
   VDSOSYM arch/x86/vdso/vdso32-syscall-syms.lds
   VDSOSYM arch/x86/vdso/vdso32-sysenter-syms.lds
   VDSOSYM arch/x86/vdso/vdso32-syms.lds
-  CC      mm/migrate.o
   LD      arch/x86/vdso/built-in.o
+  CC      mm/migrate.o
   LD      arch/x86/built-in.o
 In file included from mm/migrate.c:44:0:
 include/xen/heteromem.h:37:1: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
  int send_hotpage_skiplist();
  ^
-mm/migrate.c:71:1: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
+mm/migrate.c:92:1: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
  void init_hetero_list_fn();
  ^
-mm/migrate.c:1144:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
+mm/migrate.c:1180:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
  void init_hetero_list_fn(){
       ^
 mm/migrate.c: In function ‘init_hetero_list_fn’:
-mm/migrate.c:1151:16: warning: assignment makes pointer from integer without a cast [enabled by default]
+mm/migrate.c:1187:16: warning: assignment makes pointer from integer without a cast [enabled by default]
    skiplist_arr = (unsigned long)kmalloc(sz, GFP_KERNEL);
                 ^
 mm/migrate.c: In function ‘sys_move_pages’:
-mm/migrate.c:1760:9: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
+mm/migrate.c:1757:9: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
          pg_busy, pg_rtnode_err, pg_notexist, pg_nopte);
          ^
-mm/migrate.c:1766:5: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
+mm/migrate.c:1763:5: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
      nr_migrate_success,nr_pages);
      ^
-mm/migrate.c: In function ‘mig_can_gather_numa_stats’:
-mm/migrate.c:2369:14: warning: unused variable ‘ret’ [-Wunused-variable]
-     int nid, ret = -1;
-              ^
-mm/migrate.c: In function ‘check_page_stat’:
-mm/migrate.c:2504:19: warning: ‘return’ with a value, in function returning void [enabled by default]
-   if(pgcnt > 100) return 0;
-                   ^
-mm/migrate.c:2441:19: warning: unused variable ‘flags’ [-Wunused-variable]
-     unsigned long flags;
-                   ^
+mm/migrate.c: In function ‘print_all_conversion’:
+mm/migrate.c:2586:3: warning: passing argument 1 of ‘pmd_offset’ from incompatible pointer type [enabled by default]
+   pmd_t *pmd = pmd_offset(pgd, vma->vm_start);  
+   ^
+In file included from include/linux/mm.h:44:0,
+                 from include/linux/migrate.h:4,
+                 from mm/migrate.c:15:
+/home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/pgtable.h:535:22: note: expected ‘struct pud_t *’ but argument is of type ‘struct pgd_t *’
+ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long address)
+                      ^
+mm/migrate.c:2590:3: warning: passing argument 1 of ‘pmd_offset’ from incompatible pointer type [enabled by default]
+   pmd_t *pmd1 = pmd_offset(pgd1, vma->vm_end);  
+   ^
+In file included from include/linux/mm.h:44:0,
+                 from include/linux/migrate.h:4,
+                 from mm/migrate.c:15:
+/home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/pgtable.h:535:22: note: expected ‘struct pud_t *’ but argument is of type ‘struct pgd_t *’
+ static inline pmd_t *pmd_offset(pud_t *pud, unsigned long address)
+                      ^
+mm/migrate.c:2594:3: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘void *’ [-Wformat=]
+   printk("kmap(page) %lu\n",kmap(page));
+   ^
+mm/migrate.c:2599:3: warning: passing argument 1 of ‘virt_to_phys’ makes pointer from integer without a cast [enabled by default]
+   printk("virt_to_phys(vma->vm_start) %lu\n",virt_to_phys(vma->vm_start));
+   ^
+In file included from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/realmode.h:5:0,
+                 from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/acpi.h:32,
+                 from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/fixmap.h:19,
+                 from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/apic.h:12,
+                 from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/smp.h:13,
+                 from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/mmzone_64.h:10,
+                 from /home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/mmzone.h:4,
+                 from include/linux/mmzone.h:933,
+                 from include/linux/gfp.h:4,
+                 from include/linux/mm.h:8,
+                 from include/linux/migrate.h:4,
+                 from mm/migrate.c:15:
+/home/sudarsun/devel/nvm_3.9/arch/x86/include/asm/io.h:111:27: note: expected ‘volatile void *’ but argument is of type ‘long unsigned int’
+ static inline phys_addr_t virt_to_phys(volatile void *address)
+                           ^
+mm/migrate.c:2599:3: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘phys_addr_t’ [-Wformat=]
+   printk("virt_to_phys(vma->vm_start) %lu\n",virt_to_phys(vma->vm_start));
+   ^
+mm/migrate.c:2609:4: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘void *’ [-Wformat=]
+    printk("kmap(vmapg) %lu\n",kmap(vmapg));
+    ^
+mm/migrate.c:2614:4: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘void *’ [-Wformat=]
+    printk("kmap(vmapgend) %lu\n",kmap(vmapgend));
+    ^
+mm/migrate.c:2623:5: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘void *’ [-Wformat=]
+     printk("kmap(vmapg) %lu\n",kmap(vmapg)); 
+     ^
 mm/migrate.c: At top level:
-mm/migrate.c:2509:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
- void iterate_all_lrulist() {
+mm/migrate.c:2648:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
+ void hetero_print_vmastats(){
       ^
 mm/migrate.c: In function ‘check_pte_range’:
-mm/migrate.c:2599:3: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+mm/migrate.c:2701:3: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
    struct page *page;
    ^
-mm/migrate.c:2600:7: warning: unused variable ‘nid’ [-Wunused-variable]
+mm/migrate.c:2702:7: warning: unused variable ‘nid’ [-Wunused-variable]
    int nid;
        ^
 mm/migrate.c: At top level:
-mm/migrate.c:2790:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
+mm/migrate.c:2913:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
  void print_all_vmas() {
       ^
-mm/migrate.c: In function ‘print_all_vmas’:
-mm/migrate.c:2801:9: warning: ‘return’ with a value, in function returning void [enabled by default]
-         return err;
-         ^
-mm/migrate.c: In function ‘sys_move_inactpages’:
-mm/migrate.c:2897:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
-     nodemask_t nmask;
-     ^
-mm/migrate.c:2954:2: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
-  unsigned int cntr=0; 
-  ^
-mm/migrate.c:2982:11: error: ‘KERNE_ALERT’ undeclared (first use in this function)
-    printk(KERNE_ALERT "page->nvpgoff %lu\n", page->nvpgoff);
-           ^
-mm/migrate.c:2982:11: note: each undeclared identifier is reported only once for each function it appears in
-mm/migrate.c:2982:23: error: expected ‘)’ before string constant
-    printk(KERNE_ALERT "page->nvpgoff %lu\n", page->nvpgoff);
-                       ^
-mm/migrate.c:3053:21: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
-                     nr_migrate_success,size, pageinhotlist);
-                     ^
-mm/migrate.c:3053:21: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 3 has type ‘unsigned int’ [-Wformat=]
-mm/migrate.c:2979:17: warning: unused variable ‘mfn’ [-Wunused-variable]
-   unsigned long mfn = hot_frame_list[cntr];
-                 ^
-mm/migrate.c:3049:1: warning: label ‘print_stats’ defined but not used [-Wunused-label]
- print_stats:
- ^
-mm/migrate.c:2956:28: warning: unused variable ‘endpfn’ [-Wunused-variable]
-  unsigned long startpfn=0, endpfn=0; 
-                            ^
-mm/migrate.c:2956:16: warning: unused variable ‘startpfn’ [-Wunused-variable]
-  unsigned long startpfn=0, endpfn=0; 
-                ^
-mm/migrate.c:2899:9: warning: unused variable ‘err’ [-Wunused-variable]
-     int err = 0;
-         ^
-mm/migrate.c:2866:16: warning: unused variable ‘migratetot’ [-Wunused-variable]
-  unsigned long migratetot=0;
-                ^
-mm/migrate.c:2863:6: warning: unused variable ‘dest’ [-Wunused-variable]
-  int dest=1;
-      ^
-mm/migrate.c:2861:22: warning: unused variable ‘tmp’ [-Wunused-variable]
-  unsigned long end=0,tmp=0;
-                      ^
-mm/migrate.c:2859:32: warning: unused variable ‘prev’ [-Wunused-variable]
-  struct vm_area_struct * vma, *prev;
-                                ^
+mm/migrate.c: In function ‘check_vma_exists’:
+mm/migrate.c:2933:20: warning: unused variable ‘mm’ [-Wunused-variable]
+  struct mm_struct *mm;
+                    ^
 mm/migrate.c: At top level:
-mm/migrate.c:1175:12: warning: ‘compare_thresholds’ defined but not used [-Wunused-function]
- static int compare_thresholds(const void *a, const void *b)
-            ^
-mm/migrate.c:2414:12: warning: ‘mig_gather_pte_stats’ defined but not used [-Wunused-function]
- static int mig_gather_pte_stats(pmd_t *pmd, unsigned long addr,
-            ^
-mm/migrate.c:2545:21: warning: ‘new_node_page’ defined but not used [-Wunused-function]
- static struct page *new_node_page(struct page *page, unsigned long node, int **x)
-                     ^
-mm/migrate.c: In function ‘adddebugpfn’:
-mm/migrate.c:2574:1: warning: control reaches end of non-void function [-Wreturn-type]
- }
+mm/migrate.c:2997:5: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
+ int do_complete_page_walk() {
+     ^
+mm/migrate.c: In function ‘do_complete_page_walk’:
+mm/migrate.c:3024:68: error: ‘pagelist’ undeclared (first use in this function)
+        flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK, &pagelist);
+                                                                    ^
+mm/migrate.c:3024:68: note: each undeclared identifier is reported only once for each function it appears in
+mm/migrate.c: In function ‘hetero_filter’:
+mm/migrate.c:3048:8: warning: unused variable ‘c’ [-Wunused-variable]
+   char c;
+        ^
+In file included from include/linux/preempt.h:11:0,
+                 from include/linux/spinlock.h:50,
+                 from include/linux/mmzone.h:7,
+                 from include/linux/gfp.h:4,
+                 from include/linux/mm.h:8,
+                 from include/linux/migrate.h:4,
+                 from mm/migrate.c:15:
+mm/migrate.c: In function ‘sys_move_inactpages’:
+include/linux/list.h:22:2: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
+  struct list_head name = LIST_HEAD_INIT(name)
+  ^
+mm/migrate.c:3118:2: note: in expansion of macro ‘LIST_HEAD’
+  LIST_HEAD(pagelist);
+  ^
+mm/migrate.c:3382:1: warning: label ‘out_plug’ defined but not used [-Wunused-label]
+ out_plug:
  ^
-mm/migrate.c: In function ‘addifexist’:
-mm/migrate.c:2581:1: warning: control reaches end of non-void function [-Wreturn-type]
+mm/migrate.c:3084:16: warning: unused variable ‘end’ [-Wunused-variable]
+  unsigned long end=0;
+                ^
+mm/migrate.c:3082:26: warning: unused variable ‘vma’ [-Wunused-variable]
+  struct vm_area_struct * vma;
+                          ^
+mm/migrate.c: In function ‘hetero_stats_addvmapg’:
+mm/migrate.c:2646:1: warning: control reaches end of non-void function [-Wreturn-type]
  }
  ^
 make[1]: *** [mm/migrate.o] Error 1
 make: *** [mm] Error 2
 make: *** Waiting for unfinished jobs....
-make[3]: *** [drivers/net/ethernet/qlogic] Interrupt
-make[3]: *** [drivers/net/ethernet/rdc] Interrupt
-make[2]: *** [drivers/usb/chipidea] Interrupt
-make[1]: *** [drivers/vfio] Interrupt
-make[2]: *** [drivers/scsi/csiostor] Interrupt
-make[2]: make[2]: *** [drivers/scsi/bfa] Interrupt
-make[1]: *** [drivers/uwb] Interrupt
-make[3]: *** [drivers/net/wireless/ipw2x00] Interrupt
-make[3]: *** [drivers/net/wireless/iwlegacy]
-Interrupt
-make[1]: *** [drivers/usb] Interrupt
-make[2]: *** [drivers/net/ethernet] Interrupt
-make[3]: *** [drivers/staging/comedi/drivers] Interrupt
-make[1]: *** [drivers/tty] Interrupt
-make[2]: *** [drivers/staging/csr] Interrupt
-make[2]: *** [drivers/staging/comedi] Interrupt
-make[1]: *** [drivers/scsi] Interrupt
-make[1]: *** [drivers/net] Interrupt
-make[1]: *** [drivers/staging] Interrupt
-make: *** [drivers] Interrupt
 make: *** wait: No child processes.  Stop.
 + CC=/usr/lib/ccache/bin/gcc
 + make bzImage -j15
-make[1]: Nothing to be done for `all'.
-  CHK     include/generated/uapi/linux/version.h
-  CC      scripts/mod/devicetable-offsets.s
-make[1]: Nothing to be done for `relocs'.
-  CHK     include/generated/utsrelease.h
-  GEN     scripts/mod/devicetable-offsets.h
-  HOSTCC  scripts/mod/file2alias.o
-  CALL    scripts/checksyscalls.sh
-  HOSTLD  scripts/mod/modpost
-  CHK     include/generated/compile.h
-  SKIPPED include/generated/compile.h
-  PASYMS  arch/x86/realmode/rm/pasyms.h
-  LDS     arch/x86/realmode/rm/realmode.lds
-  LD      arch/x86/realmode/rm/realmode.elf
-  RELOCS  arch/x86/realmode/rm/realmode.relocs
-  OBJCOPY arch/x86/realmode/rm/realmode.bin
-  AS      arch/x86/realmode/rmpiggy.o
-  LD      arch/x86/realmode/built-in.o
-  VDSOSYM arch/x86/vdso/vdso-syms.lds
-  VDSOSYM arch/x86/vdso/vdsox32-syms.lds
-  VDSOSYM arch/x86/vdso/vdso32-int80-syms.lds
-  VDSOSYM arch/x86/vdso/vdso32-syscall-syms.lds
-  VDSOSYM arch/x86/vdso/vdso32-sysenter-syms.lds
-  VDSOSYM arch/x86/vdso/vdso32-syms.lds
-  LD      arch/x86/vdso/built-in.o
-  CC      mm/migrate.o
-  LD      arch/x86/built-in.o
-In file included from mm/migrate.c:44:0:
-include/xen/heteromem.h:37:1: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
- int send_hotpage_skiplist();
- ^
-mm/migrate.c:71:1: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
- void init_hetero_list_fn();
- ^
-mm/migrate.c:1144:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
- void init_hetero_list_fn(){
-      ^
-mm/migrate.c: In function ‘init_hetero_list_fn’:
-mm/migrate.c:1151:16: warning: assignment makes pointer from integer without a cast [enabled by default]
-   skiplist_arr = (unsigned long)kmalloc(sz, GFP_KERNEL);
-                ^
-mm/migrate.c: In function ‘sys_move_pages’:
-mm/migrate.c:1760:9: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
-         pg_busy, pg_rtnode_err, pg_notexist, pg_nopte);
-         ^
-mm/migrate.c:1766:5: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
-     nr_migrate_success,nr_pages);
-     ^
-mm/migrate.c: In function ‘mig_can_gather_numa_stats’:
-mm/migrate.c:2369:14: warning: unused variable ‘ret’ [-Wunused-variable]
-     int nid, ret = -1;
-              ^
-mm/migrate.c: In function ‘check_page_stat’:
-mm/migrate.c:2504:19: warning: ‘return’ with a value, in function returning void [enabled by default]
-   if(pgcnt > 100) return 0;
-                   ^
-mm/migrate.c:2441:19: warning: unused variable ‘flags’ [-Wunused-variable]
-     unsigned long flags;
-                   ^
-mm/migrate.c: At top level:
-mm/migrate.c:2509:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
- void iterate_all_lrulist() {
-      ^
-mm/migrate.c: In function ‘check_pte_range’:
-mm/migrate.c:2599:3: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
-   struct page *page;
-   ^
-mm/migrate.c:2600:7: warning: unused variable ‘nid’ [-Wunused-variable]
-   int nid;
-       ^
-mm/migrate.c: At top level:
-mm/migrate.c:2790:6: warning: function declaration isn’t a prototype [-Wstrict-prototypes]
- void print_all_vmas() {
-      ^
-mm/migrate.c: In function ‘print_all_vmas’:
-mm/migrate.c:2801:9: warning: ‘return’ with a value, in function returning void [enabled by default]
-         return err;
-         ^
-mm/migrate.c: In function ‘sys_move_inactpages’:
-mm/migrate.c:2897:5: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
-     nodemask_t nmask;
-     ^
-mm/migrate.c:2954:2: warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]
-  unsigned int cntr=0; 
-  ^
-mm/migrate.c:2982:11: error: ‘KERNE_ALERT’ undeclared (first use in this function)
-    printk(KERNE_ALERT "page->nvpgoff %lu\n", page->nvpgoff);
-           ^
-mm/migrate.c:2982:11: note: each undeclared identifier is reported only once for each function it appears in
-mm/migrate.c:2982:23: error: expected ‘)’ before string constant
-    printk(KERNE_ALERT "page->nvpgoff %lu\n", page->nvpgoff);
-                       ^
-mm/migrate.c:3053:21: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 2 has type ‘unsigned int’ [-Wformat=]
-                     nr_migrate_success,size, pageinhotlist);
-                     ^
-mm/migrate.c:3053:21: warning: format ‘%lu’ expects argument of type ‘long unsigned int’, but argument 3 has type ‘unsigned int’ [-Wformat=]
-mm/migrate.c:2979:17: warning: unused variable ‘mfn’ [-Wunused-variable]
-   unsigned long mfn = hot_frame_list[cntr];
-                 ^
-mm/migrate.c:3049:1: warning: label ‘print_stats’ defined but not used [-Wunused-label]
- print_stats:
- ^
-mm/migrate.c:2956:28: warning: unused variable ‘endpfn’ [-Wunused-variable]
-  unsigned long startpfn=0, endpfn=0; 
-                            ^
-mm/migrate.c:2956:16: warning: unused variable ‘startpfn’ [-Wunused-variable]
-  unsigned long startpfn=0, endpfn=0; 
-                ^
-mm/migrate.c:2899:9: warning: unused variable ‘err’ [-Wunused-variable]
-     int err = 0;
-         ^
-mm/migrate.c:2866:16: warning: unused variable ‘migratetot’ [-Wunused-variable]
-  unsigned long migratetot=0;
-                ^
-mm/migrate.c:2863:6: warning: unused variable ‘dest’ [-Wunused-variable]
-  int dest=1;
-      ^
-mm/migrate.c:2861:22: warning: unused variable ‘tmp’ [-Wunused-variable]
-  unsigned long end=0,tmp=0;
-                      ^
-mm/migrate.c:2859:32: warning: unused variable ‘prev’ [-Wunused-variable]
-  struct vm_area_struct * vma, *prev;
-                                ^
-mm/migrate.c: At top level:
-mm/migrate.c:1175:12: warning: ‘compare_thresholds’ defined but not used [-Wunused-function]
- static int compare_thresholds(const void *a, const void *b)
-            ^
-mm/migrate.c:2414:12: warning: ‘mig_gather_pte_stats’ defined but not used [-Wunused-function]
- static int mig_gather_pte_stats(pmd_t *pmd, unsigned long addr,
-            ^
-mm/migrate.c:2545:21: warning: ‘new_node_page’ defined but not used [-Wunused-function]
- static struct page *new_node_page(struct page *page, unsigned long node, int **x)
-                     ^
-mm/migrate.c: In function ‘adddebugpfn’:
-mm/migrate.c:2574:1: warning: control reaches end of non-void function [-Wreturn-type]
- }
- ^
-mm/migrate.c: In function ‘addifexist’:
-mm/migrate.c:2581:1: warning: control reaches end of non-void function [-Wreturn-type]
- }
- ^
-make[1]: *** [mm/migrate.o] Error 1
-make: *** [mm] Error 2
-make: *** Waiting for unfinished jobs....
-make[3]: *** [drivers/media/pci/ivtv] Interrupt
-make[1]: *** [drivers/parport] Interrupt
-make[3]: *** [drivers/net/can/softing] Interrupt
-make[3]: *** [drivers/net/can/sja1000] Interrup
-
-make[2]: *** [drivers/mtd/ubi] Interrupt
-make[3]: *** [drivers/media/pci/cx25821] Interrupt
-make[3]: *** [drivers/media/pci/cx18] Interrupt
-make[1]: *** [net/sctp] Interrupt
-make[2]: *** [drivers/media/pci] Interrupt
-make[1]: *** [net/sched] Interrupt
-make[2]: *** [drivers/net/can] Interrupt
-make[1]: *** [drivers/media] Interrupt
-make[1]: *** [drivers/mtd] Interrupt
-make[1]: *** [drivers/mfd] Interrupt
-make[1]: *** [drivers/net] Interrupt
-make: *** [fs] Interrupt
-make[1]: *** [net/netfilter] Interrupt
-make: *** [drivers] Interrupt
-make: *** [net] Interrupt
