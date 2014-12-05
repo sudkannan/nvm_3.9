@@ -943,5 +943,6 @@ asmlinkage long sys_move_inactpages(unsigned long start,  unsigned long migsize)
 
 asmlinkage long sys_hsm_alloc(void);
 asmlinkage long sys_hsm_free(void);
+asmlinkage long sys_hsm_read(unsigned int start);
 
 #endif

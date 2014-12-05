@@ -582,6 +582,8 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 			//printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			//goto skiplisterr;
 		}
+
+        printk("get_hotpage_list\n");
 		//printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
 		//				  "returns %u\n", ret);
 #if 0	
