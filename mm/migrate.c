@@ -3147,6 +3147,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 #endif	
 
 #if 1
+
+	if(hotpgcnt > 1024) hotpgcnt=1024;
+
+
 	for (cntr=0; cntr < hotpgcnt; cntr++){
 
     	unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
@@ -3172,8 +3176,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	if (!list_empty(&pagelist)) {
 
 	   /*printk(KERN_ALERT "calling migration \n");*/
-       err = my_migrate_pages(&pagelist, new_page_node, dest,
-                               MIGRATE_SYNC, MR_SYSCALL);
+       //err = my_migrate_pages(&pagelist, new_page_node, dest,
+         //                      MIGRATE_SYNC, MR_SYSCALL);
+	  	err = my_migrate_pages(&pagelist, new_page_node, dest,
+        	                      MIGRATE_ASYNC, MR_SYSCALL);
         if (err) {
           putback_lru_pages(&pagelist);
 	    }else {

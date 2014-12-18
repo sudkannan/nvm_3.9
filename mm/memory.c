@@ -84,7 +84,7 @@
 //#define HETEROMEM
 
 static unsigned int del_dirtypgcnt;
-#define NV_JIT_ALLOC
+//#define NV_JIT_ALLOC
 //#define LOCAL_DEBUG_FLAG
 //#define DEBUG_STATS
 /*---Global variales--*/
@@ -133,7 +133,7 @@ int find_first_and_delete( struct page *page);
 int refill_nvpages(void);
 static int find_persistent_node(void);
 static struct page *nv_alloc_fresh_page_node(int nid, unsigned long size);
-
+int add_to_free_nvlist(struct page *page);
 
 
 
@@ -4916,7 +4916,6 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 
 	struct page *page = NULL, *tmp = NULL;
     int ret = 0;
-	int nodeid = 0;
 
 	BUG_ON(!vma);
 	spin_lock(&nvpagelock);
@@ -5189,6 +5188,13 @@ err_alloc:
 EXPORT_SYMBOL(alloc_fresh_nv_pages);
 
 
+/*assumes free list is initialized*/
+int add_to_free_nvlist(struct page *page){
+    list_add(&page->nvlist, &nv_free_page_list);
+    return 0;
+}
+EXPORT_SYMBOL(add_to_free_nvlist);
+
 /*gets the pfn, allocates a page, assigns the passed pfn
 * to the page  adds the page to free list. Does not
 * check if the pfn is a valid pfn. Responsibility of 
@@ -5208,14 +5214,12 @@ int add_to_used_list( unsigned int pfn){
         goto error;
     }
     printk("page allocation successful \n");
-    //page->fake_pfn = pfn;
-    list_add(&page->nvlist, &nv_free_page_list);
+    add_to_free_nvlist(page);
     return 0;
 
 error:
     return -1;
 }
-
 
 
 /*gets the PFN's, allocates and load them to the

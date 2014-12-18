@@ -1947,6 +1947,11 @@ int try_to_unmap_nv_anon( unsigned long proc_id );
 unsigned long get_inode_number(struct vm_area_struct *vma);
 int find_proc_nvmap_entr(unsigned int inode);
 
+/*Adding pages to free list*/
+int add_to_free_nvlist(struct page *page);
+/*delete all nv pages in a vma*/
+int delete_pages_in_chunk(struct vm_area_struct *vma);
+
 #ifdef NV_STATS_DEBUG
 void print_proc_nvstats(struct nv_proc_obj *proc_obj);
 void print_chunk_stats(struct nv_chunk *chunk);
