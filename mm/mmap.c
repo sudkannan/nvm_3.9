@@ -2699,6 +2699,10 @@ void exit_mmap(struct mm_struct *mm)
 	free_pgtables(&tlb, vma, FIRST_USER_ADDRESS, 0);
 	tlb_finish_mmu(&tlb, 0, -1);
 
+	if(vma->persist_flags == PERSIST_VMA_FLAG){
+		delete_pages_in_chunk(vma);
+	}
+
 	/*
 	 * Walk the list again, actually closing and freeing it,
 	 * with preemption enabled, without holding any MM locks.

@@ -1394,4 +1394,62 @@ asmlinkage long sys_NValloc( unsigned long numpgs)
 
 
 
+struct page *delete_page_rbtree(struct rb_root *root){
+
+    struct rb_node *node = root->rb_node;
+    unsigned int offset;
+
+    for (node = rb_first(&root); node != NULL;
+             node = rb_next(node)) {
+
+        struct nvpage *this = rb_entry(node, struct nvpage, rbnode);
+        if(!this || this->page == NULL) {
+            printk("delete_page_rbtree: chunk rbtree not initialized \n");
+            return NULL;
+        }
+        rb_erase(node, root);
+        add_to_free_nvlist(this->page); 
+    }	
+    return NULL;
+}
+
+int delete_pages_in_chunk(struct vm_area_struct *vma){
+
+    unsigned int proc_id;
+    unsigned int chunk_id;
+    struct nv_chunk *chunk = NULL;
+
+    if(!vma) {
+        printk("delete_pages_error:null vma err \n");
+        goto delete_pages_error;
+    }
+
+    if (vma->persist_flags != PERSIST_VMA_FLAG ){
+        printk("delete_pages_error:not a NVRAM vma \n");
+        goto delete_pages_error;
+    }
+
+    /*This code heavily depends on VMA
+    and it should contain all information*/
+    proc_id = vma->proc_id;
+    chunk_id = vma->vma_id;
+
+    if(!proc_id || !chunk_id){
+        printk("delete_pages_error: invalid chunk or procid \n");
+        goto delete_pages_error;
+    }
+    chunk = find_chunk_using_vma(vma);
+
+    if(!chunk){
+        printk("delete_pages_error: finding chunk failed\n");
+        goto delete_pages_error;
+    }
+	delete_page_rbtree(&chunk->page_tree);
+	return 0;
+delete_pages_error:
+	return -1;
+}
+EXPORT_SYMBOL(delete_pages_in_chunk);
+
+
 
