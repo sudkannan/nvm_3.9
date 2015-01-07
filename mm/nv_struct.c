@@ -40,7 +40,7 @@
 #include <xen/heteromem.h>
 
 
-//#define HETEROMEM
+#define HETEROMEM
 
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG

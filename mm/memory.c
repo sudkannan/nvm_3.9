@@ -81,7 +81,7 @@
 #include <xen/page.h>
 
 
-//#define HETEROMEM
+#define HETEROMEM
 
 static unsigned int del_dirtypgcnt;
 //#define NV_JIT_ALLOC
