@@ -39,7 +39,7 @@
 #include <asm/mmu_context.h>
 #include "internal.h"
 
-//#define LOCAL_DEBUG_FLAG
+#define LOCAL_DEBUG_FLAG_1
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)
 #endif
@@ -858,6 +858,13 @@ again:			remove_next = 1 + (end > next->vm_end);
 static inline int is_mergeable_vma(struct vm_area_struct *vma,
 			struct file *file, unsigned long vm_flags)
 {
+
+	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT "is_mergeable_vma: PERSIST_VMA_FLAG set\n");
+	    return 0;
+	}
+
+
 	if (vma->vm_flags ^ vm_flags)
 		return 0;
 	if (vma->vm_file != file)
@@ -871,6 +878,12 @@ static inline int is_mergeable_anon_vma(struct anon_vma *anon_vma1,
 					struct anon_vma *anon_vma2,
 					struct vm_area_struct *vma)
 {
+
+	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT "is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
+	    return 0;
+	}
+
 	/*
 	 * The list_is_singular() test is to avoid merging VMA cloned from
 	 * parents. This can improve scalability caused by anon_vma lock.
@@ -963,6 +976,12 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
 	pgoff_t pglen = (end - addr) >> PAGE_SHIFT;
 	struct vm_area_struct *area, *next;
 	int err;
+
+	if(prev && prev->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT "is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
+	    return 0;
+	}
+
 
 	/*
 	 * We later require that vma->vm_flags == vm_flags,
@@ -1460,8 +1479,11 @@ munmap_back:
 	 * Can we just expand an old mapping?
 	 */
 	vma = vma_merge(mm, prev, addr, addr + len, vm_flags, NULL, file, pgoff, NULL);
-	if (vma)
+	if (vma && (vma->persist_flags != PERSIST_VMA_FLAG))
 		goto out;
+
+	if (vma && (vma->persist_flags == PERSIST_VMA_FLAG))
+		printk(KERN_ALERT "mmap.c not merging vma for persistent memory \n");
 
 	/*
 	 * Determine the object being mapped and call the appropriate

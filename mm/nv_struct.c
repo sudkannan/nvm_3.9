@@ -42,6 +42,7 @@
 
 //#define HETEROMEM
 
+//#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG
 
@@ -83,6 +84,8 @@ static struct nv_chunk* create_chunk_obj(struct rqst_struct *rqst,
 										 struct nv_proc_obj* proc_obj);
 struct page* get_page_frm_chunk(struct nv_chunk *chunk, long pg_off);
 unsigned int find_offset(struct vm_area_struct *vma, unsigned long addr);
+struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj);
+long sys_clear_all_persist( unsigned long proc_id);
 
 #ifdef NV_STATS_DEBUG
 	void print_global_nvstats(void);
@@ -126,6 +129,18 @@ struct nv_proc_obj * create_proc_obj( unsigned int pid ) {
 }
 EXPORT_SYMBOL(create_proc_obj);
 
+void delete_proc_obj(struct nv_proc_obj *proc_obj) {
+
+	if(&proc_obj->head_proc)
+		list_del(&proc_obj->head_proc);
+
+	if(proc_obj) {
+		kfree(proc_obj);
+	}
+}
+EXPORT_SYMBOL(delete_proc_obj);
+
+
 
 int add_proc_obj( struct nv_proc_obj *proc_obj ) {
 
@@ -162,7 +177,6 @@ struct nv_proc_obj *find_proc_obj( unsigned int proc_id ) {
            	 return proc_obj;
 		}
      }
-
 #ifdef LOCAL_DEBUG_FLAG
   	 printk("find_proc_obj: no such process \n");
 #endif
@@ -289,7 +303,7 @@ int find_proc_and_chunk(unsigned int proc_id, unsigned int chunk_id,
 		proc_obj =	find_proc_obj(proc_id);	
 	}
 	if(!proc_obj) {
-		printk("find_proc_and_chunk: finding proc_obj failed \n"); 
+		printk("find_proc_and_chunk: finding proc_obj failed %u\n",proc_id); 
 		goto find_proc_chunk_err;
 	}
 #ifdef LOCAL_DEBUG_FLAG
@@ -360,6 +374,14 @@ static struct nv_chunk* create_chunk_obj(struct rqst_struct *rqst, struct nv_pro
 	//*curr_offset = *curr_offset + length;
 	return chunk;
 }
+
+void delete_nvchunk(struct nv_chunk *chunk) {
+	if(chunk) {
+		kfree(chunk);
+	}
+}
+EXPORT_SYMBOL(delete_nvchunk);
+
 
 /*Method to set the chunk process information*/
 /*static int set_process_chunk(struct nv_chunk *chunk, unsigned int proc_id) {
@@ -925,26 +947,30 @@ struct page* get_nv_faultpg(struct vm_area_struct *vma,
 	chunk = find_chunk_using_vma(vma);
 	if(!chunk){	
 #ifdef LOCAL_DEBUG_FLAG
-		printk("get_nv_faultpg: finding chunk failed\n");
+		printk("KERN_ALERT get_nv_faultpg: finding chunk failed\n");
 #endif
 		*err = UNEXP_ERR;
 		goto err_nv_faultpg;	
 	}
    if ((offset = (fault_addr - vma->vm_start)) < 0){
-        printk("nv_read: offset  %lu is incorrect \n",offset);
+#ifdef LOCAL_DEBUG_FLAG
+        printk("KERN_ALERT nv_read: offset  %lu is incorrect \n",offset);
+#endif
 		 *err = UNEXP_ERR;
 		goto err_nv_faultpg;
     }
     pg_off = find_offset(vma,fault_addr);
 	if(pg_off < 0) {
-		printk("get_nv_faultpg: offset error \n");
+#ifdef LOCAL_DEBUG_FLAG
+		printk("KERN_ALERT get_nv_faultpg: offset error \n");
+#endif
 		*err = UNEXP_ERR;
 		goto err_nv_faultpg;
 	}
 	/*get the page from corresponsing offset*/
 	if ( (page = get_page_frm_chunk(chunk, pg_off)) == NULL){
 #ifdef LOCAL_DEBUG_FLAG
-        printk("get_nv_faultpg: get_page_frm_chunk failed \n");
+        printk("KERN_ALERT get_nv_faultpg: get_page_frm_chunk failed \n");
 #endif
 		*err = UNEXP_ERR;
         goto err_nv_faultpg;
@@ -969,18 +995,24 @@ struct page* get_nv_faultpg(struct vm_area_struct *vma,
 			vma->vm_start,
 			page->nvpgoff);
 #endif
-	
-	find_page(proc_id, chunk_id, 0);
-
+	 //find_page(proc_id, chunk_id, 0);
      return page;
+
 err_nv_faultpg:
+#ifdef LOCAL_DEBUG_FLAG_1
+	if(vma) 
+	printk("FAILED get_nv_faultpg: proc_id %d "
+		   "chunk_id: %d, fault_addr %lu "
+		   " vma->vm_start %lu, pg_off %lu \n", 
+			(int)proc_id, (int)chunk_id, 
+			fault_addr,
+			vma->vm_start, 
+			pg_off);
+#endif
 	return NULL;
 
 }
 EXPORT_SYMBOL(get_nv_faultpg);
-
-
-
 
 //Method to get a page from the chunk list
 struct page* get_page_frm_chunk(struct nv_chunk *chunk, long pg_off){
@@ -1011,14 +1043,15 @@ struct page* get_page_frm_chunk(struct nv_chunk *chunk, long pg_off){
 	}
 
 	 if( chunk->max_pg_offset < pg_off ) {
-		//No point iterating the tree.
+		 //No point iterating the tree.
 		//we will definitely not find the page
-#ifdef LOCAL_DEBUG_FLAG
-		printk("get_page_frm_chunk: req pageoff greater that max\n");
+#ifdef LOCAL_DEBUG_FLAG_1
+		printk("get_page_frm_chunk: req pageoff %u "
+				"greater that max %u \n", pg_off, 
+				chunk->max_pg_offset);
 #endif
 		goto page_frm_chunk_err;
 	}
-
 
 	page = search_page_rbtree(&chunk->page_tree, pg_off);
     if(!page){   
@@ -1033,7 +1066,8 @@ struct page* get_page_frm_chunk(struct nv_chunk *chunk, long pg_off){
 
 page_frm_chunk_err:
 #ifdef LOCAL_DEBUG_FLAG
-	printk("get_page_frm_chunk: page not found \n");
+	printk("get_page_frm_chunk: page with off %u not "
+			"found \n", pg_off);
 #endif
 	return NULL;
 }
@@ -1359,19 +1393,16 @@ asmlinkage long sys_NValloc( unsigned long numpgs)
 		printk("heteromem alloc succeeded\n");			
 	}*/
 
+#ifdef HETEROMEM
    int rc;
    struct page **pages;
-
    printk(KERN_ALERT "sys_NValloc: numpgs %lu \n",numpgs);
-
    /*pages = kmalloc(numpgs*sizeof(struct page), GFP_KERNEL);
    if (pages == NULL) {
 		printk("sys_NValloc: Allocation failed \n"); 
         return -ENOMEM;
 	}*/
-
    printk(KERN_ALERT "sys_NValloc: kalloc \n");	
-
 	//send_hotpage_skiplist();
    if(numpgs == 0){
 		alloc_xenheteromemed_pages(numpgs, pages, 1, 1);
@@ -1389,17 +1420,62 @@ asmlinkage long sys_NValloc( unsigned long numpgs)
 	}else {
 		printk("Successfuly allocated pages \n");
 	}
+#else
+    printk(KERN_ALERT "sys_NValloc: invoking iterate_chunk \n");
+	sys_clear_all_persist(numpgs);
+#endif
 	return 0;	
 }
 
+asmlinkage long sys_clear_all_persist( unsigned long proc_id){
 
+	struct nv_proc_obj *proc_obj = NULL;
+	struct nv_proc_obj *tmp_proc_obj=NULL;
+	struct list_head *pos = NULL;
+
+	pos = &nv_proc_objlist;
+
+    if(!proc_list_init_flag || !pos){
+        printk("sys_clear_all_persist: proc list not initialized \n");
+		goto endclear;
+     }
+
+	if(proc_id == 0){
+
+		printk(KERN_ALERT "sys_clear_all_persist: clearing all persistent state \n");
+
+	    list_for_each_entry_safe( proc_obj,tmp_proc_obj, pos, head_proc) 
+		if ( proc_obj) {
+			iterate_chunk(proc_obj);
+#ifdef LOCAL_DEBUG_FLAG_1
+			printk("sys_clear_all_persist: clearing pages for proc %u\n", 
+					proc_obj->pid);
+#endif
+     	}
+	}else {
+		proc_obj= find_proc_obj(proc_id);
+	    if(!proc_obj){
+    	    printk("sys_clear_all_persist: finding proc_obj failed \n");
+        	goto endclear;
+    	}
+
+		if (!proc_obj->chunk_initialized){
+			printk("sys_clear_all_persist: proc %d chunk list not initialized \n", proc_obj->pid);
+			goto endclear;
+		}
+		iterate_chunk(proc_obj);
+	}
+	
+endclear:
+	return 0;
+}
 
 struct page *delete_page_rbtree(struct rb_root *root){
 
     struct rb_node *node = root->rb_node;
     unsigned int offset;
 
-    for (node = rb_first(&root); node != NULL;
+    for (node = rb_first(root); node != NULL;
              node = rb_next(node)) {
 
         struct nvpage *this = rb_entry(node, struct nvpage, rbnode);
@@ -1452,4 +1528,71 @@ delete_pages_error:
 EXPORT_SYMBOL(delete_pages_in_chunk);
 
 
+struct page *clear_page_data(struct rb_root *root){
+
+    struct rb_node *node = root->rb_node;
+
+    for (node = rb_first(root); node != NULL;
+             node = rb_next(node)) {
+ 
+        struct nvpage *this = rb_entry(node, struct nvpage, rbnode);
+        if(!this || this->page == NULL) {
+            printk("clear_page_data: chunk rbtree not initialized \n");
+            return NULL;
+        }
+	    //printk("clear_page_data: clearing page %u\n", this->page->nvpgoff);
+
+		spin_lock(&nv_proclist_lock);
+        rb_erase(node, root);
+		//printk("clear_page_data: Calling clear_page(this->page) \n");
+		//clear_page(this->page);	
+        add_to_free_nvlist(this->page); 
+		spin_unlock(&nv_proclist_lock);
+     }	
+    return NULL;
+}
+
+
+
+/*Function to find the chunk.
+@ process_id: process identifier
+@ var:  variable which we are looking for
+ */
+struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
+
+    struct rb_root *root = NULL;
+    struct rb_node *node = NULL; 
+    unsigned int chunkid;
+   
+    root = &proc_obj->chunk_tree;
+	if(!root){
+		printk("iterate_chunk: root is null \n");
+		goto finish_iter;
+	}
+
+    for (node = rb_first(root); node != NULL;
+		node = rb_next(node)) {
+
+        struct nv_chunk *this = rb_entry(node, struct nv_chunk, rb_chunknode);
+      	if(!this) {
+            goto finish_iter;
+        }
+		//printk("iterate_chunk: proc id %u deleting chunk %u and " 
+		//		"pages \n",proc_obj->pid, this->vma_id);
+
+		clear_page_data(&this->page_tree);
+		rb_erase(node, root);
+		delete_nvchunk(this);
+    }
+
+	delete_proc_obj(proc_obj);
+	//printk("iterate_chunk: deleted proc obj and its chunks %u\n", proc_obj->pid);
+
+
+finish_iter:
+#ifdef LOCAL_DEBUG_FLAG_1
+    printk( "find_chunk: could not find chunk\n");
+#endif
+	return NULL;
+}
 

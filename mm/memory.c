@@ -82,6 +82,7 @@
 
 
 //#define HETEROMEM
+#define SETNVMPAGEBIT 
 
 static unsigned int del_dirtypgcnt;
 //#define NV_JIT_ALLOC
@@ -90,8 +91,11 @@ static unsigned int del_dirtypgcnt;
 /*---Global variales--*/
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(nv_pagelist_lock);
 extern unsigned int g_nv_init_pgs;
+static unsigned int tot_nvpgs_used;
+static unsigned int reserved_nv_pages;
+
+
 #ifdef DEBUG_STATS
-static unsigned int tot_nv_pages;
 static unsigned int non_persist_pages;
 //stupid variable. plz remove it and all ref
 unsigned long print_cntr;
@@ -3986,6 +3990,10 @@ int handle_pte_fault(struct mm_struct *mm,
 					pte, pmd, flags, entry);
 	}
 
+	if ( vma->persist_flags == PERSIST_VMA_FLAG ){
+		printk(KERN_ALERT "persistent memory unexpected condition\n");	
+	}
+
 
 	if (pte_numa(entry))
 		return do_numa_page(mm, vma, address, entry, pte, pmd);
@@ -4689,7 +4697,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	pte_t entry;
     //FIXME: NEEDS TO BE CHANGED IN A NUMA MACHINE        
     struct nv_proc_obj *proc_obj;
-	int err = 0;
+	int err = 0,page_reuse=0;
 	int write_fault=0;
 
 #ifdef DEBUG_TIMER
@@ -4720,7 +4728,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
         goto setpte;
     }
 	write_fault= flags & FAULT_FLAG_WRITE;
-if(!vma->noPersist) {
+	if(!vma->noPersist) {
 	/* Use the zero-page for reads */
 	if (!(flags & FAULT_FLAG_WRITE)) {
 		page = NULL;
@@ -4745,7 +4753,7 @@ if(!vma->noPersist) {
 		}	
 		
 	}
-}
+//}
 #endif
 
 write_fault:
@@ -4762,10 +4770,13 @@ write_fault:
 				if(page){
 				   set_bit(PG_nvram, &page->flags);
 				   add_pages_to_chunk( vma, page, address);
-				   set_bit(PG_nvram, &page->flags);
+				   //set_bit(PG_nvram, &page->flags);
 				}			 
 			}else {
 				atomic_inc(&page->_count);
+				set_bit(PG_nvram, &page->flags);
+				set_bit(PG_locked, &page->flags);
+				page_reuse=1;
 			}
 		}else {
 			/*we require no persistent pages from NVRAM*/
@@ -4821,7 +4832,11 @@ write_fault:
 	        SetPageUnevictable(page);
         }*/   
 	//inc_mm_counter(mm, anon_rss);
-	inc_mm_counter_fast(mm, MM_ANONPAGES);
+	
+
+	//if(!page_reuse)
+		inc_mm_counter_fast(mm, MM_ANONPAGES);
+
 	page_add_new_anon_rmap(page, vma, address);
 setpte:
 	set_pte_at(mm, address, page_table, entry);
@@ -4879,9 +4894,10 @@ static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
 		//spin_unlock(&nv_pagelist_lock);
 		return NULL;
    }
-#ifdef DEBUG_STATS
-	tot_nv_pages++;
-	printk("total allocated nv_pages %u \n",tot_nv_pages);
+#ifndef DEBUG_STATS
+	tot_nvpgs_used++;
+	if(tot_nvpgs_used % 10000 == 0)
+		printk("total allocated nv_pages %u \n",tot_nvpgs_used);
 #endif
 	atomic_inc(&page->_count);
 	//atomic_inc(&page->_count);
@@ -4915,7 +4931,7 @@ int refill_nvpages(void){
 struct page* getnvpage(struct vm_area_struct *vma ) {
 
 	struct page *page = NULL, *tmp = NULL;
-    int ret = 0;
+    int ret = 0, nodeid=0;
 
 	BUG_ON(!vma);
 	spin_lock(&nvpagelock);
@@ -4964,14 +4980,12 @@ get_frm_jit_alloc:
 	}
 #endif
 
-
 #ifdef HETEROMEM
 get_frm_hetero:
 
 #ifdef LOCAL_DEBUG_FLAG
 	printk("KERN_ALERT TRYING TO ALLOCATE FROM HETERO \n");
 #endif
-
 	page = hetero_getnxt_page(false);
 	if(!page){
 		printk("KERN_ALERT getting heteropage failed \n");
@@ -4988,7 +5002,6 @@ get_frm_hetero:
 #endif
 
 #endif
-
 	spin_unlock(&nvpagelock);
 	return page; 
 
@@ -5130,12 +5143,13 @@ allocate:
 #endif 
 
 #ifdef SETNVMPAGEBIT
-			if(test_bit(PG_nvram, &page->flags))
-				goto allocate;
+			/*if(test_bit(PG_nvram, &page->flags))
+				goto allocate;*/
 
             //We need to mark pages as type NVRAM avoids 
             //clearing pages when used with I/O backed mmap
             set_bit(PG_nvram, &page->flags); 
+			set_bit(PG_locked,&page->flags);
 #endif
 
 #ifdef DEBUG_STATS
@@ -5172,8 +5186,10 @@ int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages)
 
    for (count = 0; count < num_pages; count++) {
         page = nv_alloc_fresh_page_node(start_nid, PAGE_SIZE);
-        if (page)
-            list_add(&page->nvlist, &nv_free_page_list);
+        if (page) {
+			add_to_free_nvlist(page);
+			reserved_nv_pages++;
+		}
 		else{
 			goto err_alloc;
 		}
@@ -5191,6 +5207,22 @@ EXPORT_SYMBOL(alloc_fresh_nv_pages);
 /*assumes free list is initialized*/
 int add_to_free_nvlist(struct page *page){
     list_add(&page->nvlist, &nv_free_page_list);
+
+	if(tot_nvpgs_used)
+		tot_nvpgs_used--;	
+
+#ifdef SETNVMPAGEBIT
+    //We need to mark pages as type NVRAM avoids 
+	//clearing pages when used with I/O backed mmap
+   	set_bit(PG_nvram, &page->flags); 
+	set_bit(PG_locked,&page->flags);
+
+	/*if(tot_nvpgs_used && (tot_nvpgs_used % 1000 == 0))
+    printk(KERN_ALERT 
+			"add_to_free_nvlist: reserved_nv_pages %u, "
+			"tot_nvpgs_used %u\n",
+			reserved_nv_pages, tot_nvpgs_used);*/
+#endif
     return 0;
 }
 EXPORT_SYMBOL(add_to_free_nvlist);
@@ -5215,6 +5247,7 @@ int add_to_used_list( unsigned int pfn){
     }
     printk("page allocation successful \n");
     add_to_free_nvlist(page);
+	reserved_nv_pages++;
     return 0;
 
 error:
