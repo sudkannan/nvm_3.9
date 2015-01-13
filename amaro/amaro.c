@@ -5,13 +5,13 @@
 #include <asm/xen/page.h>
 #include <asm/pgtable_types.h>
 
-#define NUM_PAGES 4
+#include <xen/amaro.h>
+
+#define MAX_HOT_MFN 16384
+
 void *vaddrs[NUM_PAGES];
 static unsigned long mfns[NUM_PAGES];
-
-struct frame {
-    unsigned int mfn;
-};
+static xen_pfn_t frame_list[MAX_HOT_MFN];
 
 static int alloc_shared_pages(void);
 static void free_shared_pages(void);
@@ -109,4 +109,47 @@ asmlinkage long sys_hsm_free(void)
     printk("sys_hsm_free()");
     free_shared_pages();
     return 0;
+}
+
+xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
+{
+    unsigned int frames_ppage, pidx, fidx;
+    unsigned long offset;
+    struct frame *f;
+    void *curr_base_vaddr;
+
+    printk("get_hotpage_list_sharedmem\n");
+
+    frames_ppage = PAGE_SIZE / sizeof(struct frame);
+    offset = 0;
+
+    unsigned long *lock = (unsigned long *)vaddrs[0];
+    printk("going to lock = %p\n", lock);
+    bit_spin_lock(0, lock);
+    printk("lock acquired!\n");
+  
+    for(pidx = 0; pidx < NUM_PAGES; ++pidx)
+    {
+        curr_base_vaddr = vaddrs[pidx];
+
+        for(fidx = 0; fidx < frames_ppage; ++fidx)
+        {
+            if (pidx == 0 && fidx == 0)
+                continue;
+
+            offset = fidx * sizeof(struct frame);
+            f = (void *)(((unsigned long)curr_base_vaddr) + offset);
+
+            frame_list[pidx * frames_ppage + fidx] = f->mfn;
+        }
+
+        //printk("******** pidx = %u, frames_ppage = %u, fidx = %u = %u\n", pidx, 
+        //        frames_ppage, fidx, pidx * frames_ppage + fidx);
+    }
+    
+    *hotcnt = MAX_HOT_MFN;
+    printk("going to unlock\n");
+    bit_spin_unlock(0, lock);
+    printk("unlocked\n");
+    return frame_list;
 }

@@ -583,7 +583,6 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 			//goto skiplisterr;
 		}
 
-        printk("get_hotpage_list\n");
 		//printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
 		//				  "returns %u\n", ret);
 #if 0	

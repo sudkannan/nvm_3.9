@@ -42,6 +42,7 @@
 
 #include <xen/balloon.h>
 #include <xen/heteromem.h>
+#include <xen/amaro.h>
 #include <asm/xen/page.h>
 #include <asm/page.h>
 #include <asm/io.h>
@@ -99,13 +100,10 @@ static unsigned long *skiplist_arr;
 //#define HETERODEBUG
 unsigned int  nr_migrate_success;
 
-unsigned int pg_debug_count;
-
 unsigned int pg_busy;
 unsigned int pg_rtnode_err;
 unsigned int pg_notexist;
 unsigned int pg_nopte;
-
 
 unsigned int beforemigrate_dbg_count;
 unsigned int nonrsrvpg_dbg_count;
@@ -2942,10 +2940,10 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 {
 	pg_debug_count++;
 
-	if (!page)
-		return -1;
-
-	normalpg_dbg_count++;
+	//if (!page)
+	//	return -1;
+	
+    //normalpg_dbg_count++;
 
 	/*
 	 * vm_normal_page() filters out zero pages, but there might
@@ -2954,8 +2952,8 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 	if (PageReserved(page))
 		return -1;
 
-	nonrsrvpg_dbg_count++;
-
+	//nonrsrvpg_dbg_count++;
+ 
 	 //print_all_conversion(vma, page);
 	 if(page->nvdirty == PAGE_MIGRATED) {
 		dup_hot_page++;  
@@ -2964,10 +2962,9 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 
 	 /*page has been already added to the dirty list*/
 	 page->nvdirty=PAGE_MIGRATED;
-
-	 /*unique hot pages detected*/
+	 
+     /*unique hot pages detected*/
 	 pageinhotlist++;
-
 
 	 if(!find_page_vma(page, private)){
 		return -1;
@@ -3125,7 +3122,9 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
         vmacntr=0;
 #endif	
 
-	hot_frame_list = get_hotpage_list(&hotpgcnt);
+	//hot_frame_list = get_hotpage_list(&hotpgcnt);
+    hot_frame_list = get_hotpage_list_sharedmem(&hotpgcnt);
+
  	if(!hotpgcnt || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
 	}
@@ -3148,12 +3147,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 
 #if 1
 
-	if(hotpgcnt > 1024) hotpgcnt=1024;
-
-
 	for (cntr=0; cntr < hotpgcnt; cntr++){
-
-    	unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
+        if (hot_frame_list[cntr] == 0) continue;
+    	
+        unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
 	    struct page *page = pfn_to_page(pfn);
 
     	if(!page) continue;
@@ -3319,6 +3316,9 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 
 
 	for (cntr=0; cntr < hotpgcnt; cntr++){
+        if (hot_frame_list[cntr] == 0) {
+            continue;
+        }
 
    		unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
 		struct page *page = pfn_to_page(pfn);
