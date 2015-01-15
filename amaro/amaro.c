@@ -4,6 +4,7 @@
 #include <asm/xen/interface.h>
 #include <asm/xen/page.h>
 #include <asm/pgtable_types.h>
+#include <linux/memcontrol.h>
 
 #include <xen/amaro.h>
 
@@ -117,16 +118,12 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
     unsigned long offset;
     struct frame *f;
     void *curr_base_vaddr;
-
-    printk("get_hotpage_list_sharedmem\n");
+    //unsigned long *lock = (unsigned long *)vaddrs[0];
 
     frames_ppage = PAGE_SIZE / sizeof(struct frame);
     offset = 0;
 
-    unsigned long *lock = (unsigned long *)vaddrs[0];
-    printk("going to lock = %p\n", lock);
-    bit_spin_lock(0, lock);
-    printk("lock acquired!\n");
+    //bit_spin_lock(0, lock);
   
     for(pidx = 0; pidx < NUM_PAGES; ++pidx)
     {
@@ -134,22 +131,23 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
 
         for(fidx = 0; fidx < frames_ppage; ++fidx)
         {
-            if (pidx == 0 && fidx == 0)
+            if (unlikely(pidx == 0 && fidx == 0))
                 continue;
 
             offset = fidx * sizeof(struct frame);
             f = (void *)(((unsigned long)curr_base_vaddr) + offset);
 
+            if (unlikely(mfn_to_pfn(f->mfn) == INVALID_P2M_ENTRY)) {
+                //printk("page not added (invalid p2m) \n");
+                frame_list[pidx * frames_ppage + fidx] = 0;
+                continue;
+            }
+
             frame_list[pidx * frames_ppage + fidx] = f->mfn;
         }
-
-        //printk("******** pidx = %u, frames_ppage = %u, fidx = %u = %u\n", pidx, 
-        //        frames_ppage, fidx, pidx * frames_ppage + fidx);
     }
     
     *hotcnt = MAX_HOT_MFN;
-    printk("going to unlock\n");
-    bit_spin_unlock(0, lock);
-    printk("unlocked\n");
+    //bit_spin_unlock(0, lock);
     return frame_list;
 }
