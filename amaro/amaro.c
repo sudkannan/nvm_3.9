@@ -137,7 +137,7 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
             offset = fidx * sizeof(struct frame);
             f = (void *)(((unsigned long)curr_base_vaddr) + offset);
 
-            if (unlikely(mfn_to_pfn(f->mfn) == INVALID_P2M_ENTRY)) {
+            if (unlikely(f->mfn != 0 && mfn_to_pfn(f->mfn) == INVALID_P2M_ENTRY)) {
                 //printk("page not added (invalid p2m) \n");
                 frame_list[pidx * frames_ppage + fidx] = 0;
                 continue;
