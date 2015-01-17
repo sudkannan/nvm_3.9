@@ -662,6 +662,10 @@ unsigned int find_offset(struct vm_area_struct *vma, unsigned long addr) {
 void *nvpage_start = NULL;
 unsigned int nvpage_used;
 
+/*Large kmalloc allocation avoids and reduces 
+ * TLB miss
+ * TODO: the nvpage_start should be per process 
+ * instead of one global varialbe*/
 void *large_nvstruct_alloc(){
 
 	void *ptr = NULL;
@@ -684,6 +688,13 @@ err_nvstruct_alloc:
 	return NULL;
 }
 
+void large_nvstruct_free(){
+	if(nvpage_start) {
+		kfree(nvpage_start);
+		nvpage_start=NULL;
+		nvpage_used=0;
+	}
+}
 #endif
 
 
@@ -1625,8 +1636,14 @@ struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
 
 		clear_page_data(&this->page_tree);
 		rb_erase(node, root);
+#ifndef NVM_OPTIMIZE
 		delete_nvchunk(this);
+#endif
     }
+
+#ifdef NVM_OPTIMIZE
+	large_nvstruct_free();
+#endif 
 
 	delete_proc_obj(proc_obj);
 	//printk("iterate_chunk: deleted proc obj and its chunks %u\n", proc_obj->pid);
