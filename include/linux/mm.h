@@ -1580,6 +1580,12 @@ static inline struct vm_area_struct * find_vma_intersection(struct mm_struct * m
 {
 	struct vm_area_struct * vma = find_vma(mm,start_addr);
 
+    /*if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
+        printk(KERN_ALERT "find_vma_intersection: PERSIST_VMA_FLAG set "
+						"avoiding intersection \n");
+        return NULL;
+    }*/	
+
 	if (vma && end_addr <= vma->vm_start)
 		vma = NULL;
 	return vma;

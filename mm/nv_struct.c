@@ -41,10 +41,14 @@
 
 
 //#define HETEROMEM
-
 //#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG
+#define NVM_OPTIMIZE
+
+#ifdef NVM_OPTIMIZE
+#define BATCHSIZE 4*1024*1024
+#endif
 
 //Currently restrict the write to less than one page
 #define MAX_NV_WRITE_SIZE  4096
@@ -654,6 +658,34 @@ unsigned int find_offset(struct vm_area_struct *vma, unsigned long addr) {
 	return pg_off;
 }
 
+#ifdef NVM_OPTIMIZE
+void *nvpage_start = NULL;
+unsigned int nvpage_used;
+
+void *large_nvstruct_alloc(){
+
+	void *ptr = NULL;
+	int nvpagesize = sizeof(struct nvpage);
+
+	if(!nvpage_start){
+		nvpage_start = kmalloc(BATCHSIZE , GFP_KERNEL);
+		if(!nvpage_start) {
+			printk(KERN_ALERT "NVM_OPTIMIZE large_nvstruct_alloc "
+					"Cannot alloc %u \n",BATCHSIZE);
+			goto err_nvstruct_alloc;
+		}	
+		nvpage_used = 0;
+	}
+    ptr  = nvpage_start + nvpage_used;
+	nvpage_used = nvpage_used + nvpagesize;
+	return ptr;
+
+err_nvstruct_alloc:	
+	return NULL;
+}
+
+#endif
+
 
 /*add pages to rbtree node */
 int insert_page_rbtree(struct rb_root *root, struct page *page){
@@ -661,6 +693,10 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 	struct nvpage *nvpage = NULL;
 
+#ifdef NVM_OPTIMIZE
+	nvpage =large_nvstruct_alloc();
+	if(!nvpage)
+#endif
 	nvpage = kmalloc(sizeof(struct nvpage) , GFP_KERNEL);
 	if(!nvpage) {
 		printk("insert_page_rbtree: nvpage struct alloc failed \n");
@@ -875,7 +911,6 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
 	struct nv_proc_obj *proc_obj;
 
 	if(!proc_id || !chunk_id){
-
 #ifdef LOCAL_DEBUG_FLAG
 		 printk("find_page: unexpected proc_id %u,\
 					chunk_id %u \n",proc_id, chunk_id);
@@ -883,12 +918,12 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
 		goto err_nv_faultpg;
 	}
 
-    	proc_obj=find_proc_obj(proc_id);
-        if(!proc_obj) {
-        	 printk(KERN_ALERT "process with pid: %u"
-                                "does not exist \n",proc_id);
-         	goto err_nv_faultpg;
-    	}
+    proc_obj=find_proc_obj(proc_id);
+    if(!proc_obj) {
+        printk(KERN_ALERT "process with pid: %u"
+                          "does not exist \n",proc_id);
+         goto err_nv_faultpg;
+    }
 
 	chunk = find_chunk(chunk_id, proc_obj);
 	if(!chunk){	
@@ -898,24 +933,26 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
 		goto err_nv_faultpg;	
 	}
 
+/*#ifdef NVM_OPTIMIZE
+	 if( chunk->max_pg_offset < pg_off ) {
+		goto err_nv_faultpg;
+	}
+#endif*/
+
 	/*get the page from corresponsing offset*/
 	if ( (page = get_page_frm_chunk(chunk, pg_off)) == NULL){
-
 #ifdef LOCAL_DEBUG_FLAG
         printk("find_page: get_page_frm_chunk failed \n");
 #endif
         goto err_nv_faultpg;
     }
 
-	//buffer = (char *)kmalloc(PAGE_SIZE, GFP_KERNEL);	
-	//if(!safe_copy_page(buffer, page))
-	//hash = jenkin_hash(buffer, PAGE_SIZE);	
-
 #ifdef LOCAL_DEBUG_FLAG
 	printk("find_page: proc_id %d, chunk_id: %d, hash:%u \n",
 			(int)proc_id, (int)chunk_id, hash);
 #endif
      return page;
+
 err_nv_faultpg:
 	return NULL;
 }
@@ -959,7 +996,9 @@ struct page* get_nv_faultpg(struct vm_area_struct *vma,
 		 *err = UNEXP_ERR;
 		goto err_nv_faultpg;
     }
+
     pg_off = find_offset(vma,fault_addr);
+
 	if(pg_off < 0) {
 #ifdef LOCAL_DEBUG_FLAG
 		printk("KERN_ALERT get_nv_faultpg: offset error \n");
@@ -967,8 +1006,12 @@ struct page* get_nv_faultpg(struct vm_area_struct *vma,
 		*err = UNEXP_ERR;
 		goto err_nv_faultpg;
 	}
+
+
+
 	/*get the page from corresponsing offset*/
 	if ( (page = get_page_frm_chunk(chunk, pg_off)) == NULL){
+
 #ifdef LOCAL_DEBUG_FLAG
         printk("KERN_ALERT get_nv_faultpg: get_page_frm_chunk failed \n");
 #endif

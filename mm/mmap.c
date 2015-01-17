@@ -39,7 +39,9 @@
 #include <asm/mmu_context.h>
 #include "internal.h"
 
-#define LOCAL_DEBUG_FLAG_1
+//#define LOCAL_DEBUG_FLAG_1
+#define _DISABLE_PVM_MERGE
+
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)
 #endif
@@ -825,8 +827,11 @@ again:			remove_next = 1 + (end > next->vm_end);
 			uprobe_munmap(next, next->vm_start, next->vm_end);
 			fput(file);
 		}
-		if (next->anon_vma)
+
+		if (next->anon_vma) {
 			anon_vma_merge(vma, next);
+		}
+
 		mm->map_count--;
 		mpol_put(vma_policy(next));
 		kmem_cache_free(vm_area_cachep, next);
@@ -859,10 +864,12 @@ static inline int is_mergeable_vma(struct vm_area_struct *vma,
 			struct file *file, unsigned long vm_flags)
 {
 
+#ifdef _DISABLE_PVM_MERGE
 	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
     	printk(KERN_ALERT "is_mergeable_vma: PERSIST_VMA_FLAG set\n");
 	    return 0;
 	}
+#endif
 
 
 	if (vma->vm_flags ^ vm_flags)
@@ -879,10 +886,12 @@ static inline int is_mergeable_anon_vma(struct anon_vma *anon_vma1,
 					struct vm_area_struct *vma)
 {
 
+#ifdef _DISABLE_PVM_MERGE
 	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
-    	printk(KERN_ALERT "is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
+    	//printk(KERN_ALERT "is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
 	    return 0;
 	}
+#endif
 
 	/*
 	 * The list_is_singular() test is to avoid merging VMA cloned from
@@ -909,6 +918,14 @@ static int
 can_vma_merge_before(struct vm_area_struct *vma, unsigned long vm_flags,
 	struct anon_vma *anon_vma, struct file *file, pgoff_t vm_pgoff)
 {
+
+#ifdef _DISABLE_PVM_MERGE	
+	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT  "can_vma_merge_before: PERSIST_VMA_FLAG set\n");
+	    return 0;
+	}
+#endif
+
 	if (is_mergeable_vma(vma, file, vm_flags) &&
 	    is_mergeable_anon_vma(anon_vma, vma->anon_vma, vma)) {
 		if (vma->vm_pgoff == vm_pgoff)
@@ -928,6 +945,14 @@ static int
 can_vma_merge_after(struct vm_area_struct *vma, unsigned long vm_flags,
 	struct anon_vma *anon_vma, struct file *file, pgoff_t vm_pgoff)
 {
+
+#ifdef _DISABLE_PVM_MERGE
+	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT  "can_vma_merge_after: PERSIST_VMA_FLAG set\n");
+	    return 0;
+	}
+#endif
+
 	if (is_mergeable_vma(vma, file, vm_flags) &&
 	    is_mergeable_anon_vma(anon_vma, vma->anon_vma, vma)) {
 		pgoff_t vm_pglen;
@@ -977,11 +1002,12 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
 	struct vm_area_struct *area, *next;
 	int err;
 
+#ifdef _DISABLE_PVM_MERGE
 	if(prev && prev->persist_flags == PERSIST_VMA_FLAG) {
-    	printk(KERN_ALERT "is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
+    	//printk(KERN_ALERT "is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
 	    return 0;
 	}
-
+#endif
 
 	/*
 	 * We later require that vma->vm_flags == vm_flags,
@@ -994,6 +1020,15 @@ struct vm_area_struct *vma_merge(struct mm_struct *mm,
 		next = prev->vm_next;
 	else
 		next = mm->mmap;
+
+#if 0
+	if(next && next->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT "next->persist_flags == PERSIST_VMA_FLAG "
+				"is_mergeable_anon_vma: PERSIST_VMA_FLAG set\n");
+	    return NULL;
+	}
+#endif
+
 	area = next;
 	if (next && next->vm_end == end)		/* cases 6, 7, 8 */
 		next = next->vm_next;
@@ -1479,11 +1514,18 @@ munmap_back:
 	 * Can we just expand an old mapping?
 	 */
 	vma = vma_merge(mm, prev, addr, addr + len, vm_flags, NULL, file, pgoff, NULL);
+
+#ifdef _DISABLE_PVM_MERGE
 	if (vma && (vma->persist_flags != PERSIST_VMA_FLAG))
 		goto out;
 
 	if (vma && (vma->persist_flags == PERSIST_VMA_FLAG))
 		printk(KERN_ALERT "mmap.c not merging vma for persistent memory \n");
+#else
+	if (vma)
+		goto out;
+#endif
+
 
 	/*
 	 * Determine the object being mapped and call the appropriate
@@ -2527,10 +2569,12 @@ int do_munmap(struct mm_struct *mm, unsigned long start, size_t len)
 		}
 	}
 
+#ifdef _DISABLE_PVM_MERGE
 	if(vma->persist_flags == PERSIST_VMA_FLAG) {
 		printk("do_munmap: Persist flagset before detach_vmas_to_be_unmapped \n");		
 		vma->persist_flags = PERSIST_VMA_CLEAR_FLAG;
 	}
+#endif
 
 	/*
 	 * Remove the vma's, and unmap the actual pages
@@ -2642,6 +2686,12 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	/* Can we just expand an old private anonymous mapping? */
 	vma = vma_merge(mm, prev, addr, addr + len, flags,
 					NULL, NULL, pgoff, NULL);
+
+	if(vma && vma->persist_flags == PERSIST_VMA_FLAG) {
+    	printk(KERN_ALERT "do_brk: PERSIST_VMA_FLAG set\n");
+	    vma = NULL;
+	}
+
 	if (vma)
 		goto out;
 

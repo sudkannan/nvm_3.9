@@ -83,6 +83,9 @@
 
 //#define HETEROMEM
 #define SETNVMPAGEBIT 
+#define _NV_CODE_DEBUG
+//#define _BIGNV_LOCK
+#define PG_reuse 9
 
 static unsigned int del_dirtypgcnt;
 //#define NV_JIT_ALLOC
@@ -119,6 +122,11 @@ struct pmem_map_struct *pmem_map;
 //count to indicate the total number of entry's in pmem_map
 static unsigned int  map_cnt =0;
 struct page *temp_del_page = NULL;
+
+#ifdef _BIGNV_LOCK
+spinlock_t nvbiglock;
+#endif
+
 int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages);
 int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
@@ -4681,8 +4689,122 @@ void copy_user_huge_page(struct page *dst, struct page *src,
 #endif /* CONFIG_TRANSPARENT_HUGEPAGE || CONFIG_HUGETLBFS */
 
 
+//#TEST CODE
+/*
+ * We enter with non-exclusive mmap_sem (to exclude vma changes,
+ * but allow concurrent faults), and pte mapped but not yet locked.
+ * We return with mmap_sem still held, but pte unmapped and unlocked.
+ */
+int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, pte_t *page_table, pmd_t *pmd,
+		unsigned int flags)
+{
+	struct page *page = NULL;
+	spinlock_t *ptl;
+	pte_t entry;
+    struct nv_proc_obj *proc_obj;
+	int err = 0,page_reuse=0;
+	int write_fault=0;
 
-//CAUTION BUGGY
+
+	pte_unmap(page_table);
+
+	/* Check if we need to add a guard page to the stack */
+	if (check_stack_guard_page(vma, address) < 0){
+		 if (vma &&  vma->persist_flags == PERSIST_VMA_FLAG )
+			         printk("SIGBUS in do_anonymous_nvmem_page\n");
+		return VM_FAULT_SIGBUS;
+	}
+
+write_fault:
+	/* Allocate our own private page. */
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+        page = NULL;
+
+		if(!vma->noPersist) {
+
+		    page = get_nv_faultpg(vma, address, &err);
+
+			if(!page) {
+
+				page =  nv_alloc_page_numa( vma);
+
+				if(page){
+				   set_bit(PG_nvram, &page->flags);
+				   add_pages_to_chunk( vma, page, address);
+				}
+
+			}else {
+				atomic_inc(&page->_count);
+				page_reuse=1;
+			}
+		}else {
+			/*we require no persistent pages from NVRAM*/
+			page =  nv_alloc_page_numa( vma);
+			if(!page) {
+				page = alloc_zeroed_user_highpage_movable(vma, address);
+			}
+#ifndef NV_JIT_ALLOC	
+			set_bit(PG_nvram, &page->flags);
+#endif
+		}	
+		if (!page){
+                printk("do_anonymous_nvmem_page: page allocation failed \n");
+			goto oom;
+         }
+
+        /*set the page update flag holding the smp_wmb(); */
+	__SetPageUptodate(page);
+
+	if(!(page->nvdirty)){
+
+		page->nvdirty = PG_reuse;
+        /*charges the memory controller for the page obtained */
+        /*on success returns 0 or else failure */
+		if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
+			goto oom_free_page;
+	}
+
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty(entry));
+
+	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+	if (!pte_none(*page_table))
+		goto release;
+        
+	if(!page_reuse)
+		inc_mm_counter_fast(mm, MM_ANONPAGES);
+
+	page_add_new_anon_rmap(page, vma, address);
+
+setpte:
+	set_pte_at(mm, address, page_table, entry);
+	/* No need to invalidate - it was non-present before */
+	update_mmu_cache(vma, address, page_table);
+unlock:
+	pte_unmap_unlock(page_table, ptl);
+	return 0;
+release:
+	mem_cgroup_uncharge_page(page);
+	page_cache_release(page);
+
+	goto unlock;
+
+oom_free_page:
+	page_cache_release(page);
+oom:
+	return VM_FAULT_OOM;
+}
+
+
+
+#if 0
+
+#ORIGINAL CODE WITHOUT OPTIMIZATION
+
 /*
  * We enter with non-exclusive mmap_sem (to exclude vma changes,
  * but allow concurrent faults), and pte mapped but not yet locked.
@@ -4762,8 +4884,16 @@ write_fault:
 		goto oom;
 
         page = NULL;
+
+#ifdef _BIGNV_LOCK
+		/*big lock set*/
+		spin_lock(&nvbiglock);
+#endif
+
 		if(!vma->noPersist) {
+
 		    page = get_nv_faultpg(vma, address, &err);
+
 			if(!page) {
 				page =  nv_alloc_page_numa( vma);
 				//page = alloc_zeroed_user_highpage_movable(vma, address);
@@ -4773,11 +4903,19 @@ write_fault:
 				   //set_bit(PG_nvram, &page->flags);
 				}			 
 			}else {
+
+#ifndef DEBUG_STATS
+				//tot_nvpgs_used++;
+				//if(tot_nvpgs_used % 1000 == 0)
+				//	printk("total allocated nv_pages %u \n",tot_nvpgs_used);
+#endif
 				atomic_inc(&page->_count);
 				set_bit(PG_nvram, &page->flags);
-				set_bit(PG_locked, &page->flags);
+				//set_bit(PG_locked, &page->flags);
 				page_reuse=1;
 			}
+
+
 		}else {
 			/*we require no persistent pages from NVRAM*/
 			page =  nv_alloc_page_numa( vma);
@@ -4797,6 +4935,11 @@ write_fault:
 			}
 		}
 
+#ifdef _BIGNV_LOCK
+		/*big lock unset */
+		spin_unlock(&nvbiglock);
+#endif
+
 		if (!page){
                 printk("do_anonymous_nvmem_page: page allocation failed \n");
 			goto oom;
@@ -4812,10 +4955,21 @@ write_fault:
         /*set the page update flag holding the smp_wmb(); */
 	__SetPageUptodate(page);
 
+#ifdef _NV_CODE_DEBUG	
+
+	//if(!page_reuse || !(page->nvdirty)){
+	if(!(page->nvdirty)){
+
+		page->nvdirty = PG_reuse;
+#endif
         /*charges the memory controller for the page obtained */
         /*on success returns 0 or else failure */
 	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
 		goto oom_free_page;
+#ifdef _NV_CODE_DEBUG	
+	}
+#endif
+
 
 	entry = mk_pte(page, vma->vm_page_prot);
 	if (vma->vm_flags & VM_WRITE)
@@ -4879,7 +5033,7 @@ oom_free_page:
 oom:
 	return VM_FAULT_OOM;
 }
-
+#endif
 
 /*Alloc zero pages This funnction should be added to NValloc file */
 static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
@@ -4896,7 +5050,7 @@ static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
    }
 #ifndef DEBUG_STATS
 	tot_nvpgs_used++;
-	if(tot_nvpgs_used % 10000 == 0)
+	if(tot_nvpgs_used % 1000 == 0)
 		printk("total allocated nv_pages %u \n",tot_nvpgs_used);
 #endif
 	atomic_inc(&page->_count);
@@ -5003,6 +5157,7 @@ get_frm_hetero:
 
 #endif
 	spin_unlock(&nvpagelock);
+
 	return page; 
 
 page_error: 
@@ -5149,7 +5304,7 @@ allocate:
             //We need to mark pages as type NVRAM avoids 
             //clearing pages when used with I/O backed mmap
             set_bit(PG_nvram, &page->flags); 
-			set_bit(PG_locked,&page->flags);
+			//set_bit(PG_locked,&page->flags);
 #endif
 
 #ifdef DEBUG_STATS
@@ -5215,7 +5370,7 @@ int add_to_free_nvlist(struct page *page){
     //We need to mark pages as type NVRAM avoids 
 	//clearing pages when used with I/O backed mmap
    	set_bit(PG_nvram, &page->flags); 
-	set_bit(PG_locked,&page->flags);
+	//set_bit(PG_locked,&page->flags);
 
 	/*if(tot_nvpgs_used && (tot_nvpgs_used % 1000 == 0))
     printk(KERN_ALERT 
