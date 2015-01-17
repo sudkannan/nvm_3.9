@@ -3148,9 +3148,14 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 #if 1
 
 	for (cntr=0; cntr < hotpgcnt; cntr++){
-        if (hot_frame_list[cntr] == 0) continue;
+        if (hot_frame_list[cntr] == 0)
+            continue;
     	
         unsigned long pfn =  mfn_to_local_pfn(hot_frame_list[cntr]);
+
+        if (pfn == INVALID_P2M_ENTRY)
+            continue;
+
 	    struct page *page = pfn_to_page(pfn);
 
     	if(!page) continue;
