@@ -85,6 +85,7 @@
 #define SETNVMPAGEBIT 
 #define _NV_CODE_DEBUG
 //#define _BIGNV_LOCK
+#define _NV_LOCKS
 #define PG_reuse 9
 
 static unsigned int del_dirtypgcnt;
@@ -97,6 +98,9 @@ extern unsigned int g_nv_init_pgs;
 static unsigned int tot_nvpgs_used;
 static unsigned int reserved_nv_pages;
 
+#ifdef _NV_LOCKS
+spinlock_t nvpagelock;
+#endif
 
 #ifdef DEBUG_STATS
 static unsigned int non_persist_pages;
@@ -109,7 +113,6 @@ unsigned long print_cntr;
  * are freed */
 struct list_head g_nvfreepglst;
 int g_nvlistinit = 0;
-spinlock_t nvpagelock;
 struct list_head nv_page_list;
 /*Add NV pages to this list when contents 
  * are freed */
@@ -4716,6 +4719,30 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return VM_FAULT_SIGBUS;
 	}
 
+    /* Use the zero-page for reads */
+    if (!(flags & FAULT_FLAG_WRITE)) {
+#if 0
+        entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
+                        vma->vm_page_prot));
+        page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+        if (!pte_none(*page_table))
+            goto unlock;
+        goto setpte;
+#endif
+
+	/* Allocate our own private page. */
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+		page = get_nv_faultpg(vma, address, &err);
+		if(page){
+			atomic_inc(&page->_count);
+			page_reuse=1;
+			goto update_pgtable;
+		}
+    }
+
+
 write_fault:
 	/* Allocate our own private page. */
 	if (unlikely(anon_vma_prepare(vma)))
@@ -4728,9 +4755,7 @@ write_fault:
 		    page = get_nv_faultpg(vma, address, &err);
 
 			if(!page) {
-
 				page =  nv_alloc_page_numa( vma);
-
 				if(page){
 				   set_bit(PG_nvram, &page->flags);
 				   add_pages_to_chunk( vma, page, address);
@@ -4749,9 +4774,12 @@ write_fault:
 #ifndef NV_JIT_ALLOC	
 			set_bit(PG_nvram, &page->flags);
 #endif
-		}	
+		}
+
+update_pgtable:	
 		if (!page){
-                printk("do_anonymous_nvmem_page: page allocation failed \n");
+                printk("do_anonymous_nvmem_page: "
+						"page allocation/read failed \n");
 			goto oom;
          }
 
@@ -5088,7 +5116,10 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
     int ret = 0, nodeid=0;
 
 	BUG_ON(!vma);
+
+#ifdef _NV_LOCKS
 	spin_lock(&nvpagelock);
+#endif
 
 #ifdef HETEROMEM
 	goto get_frm_hetero;
@@ -5156,12 +5187,18 @@ get_frm_hetero:
 #endif
 
 #endif
+
+#ifdef _NV_LOCKS
 	spin_unlock(&nvpagelock);
+#endif
 
 	return page; 
 
 page_error: 
+
+#ifdef _NV_LOCKS
 	spin_unlock(&nvpagelock);
+#endif
 	return NULL; 
 }
 EXPORT_SYMBOL(getnvpage);

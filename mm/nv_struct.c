@@ -44,10 +44,11 @@
 //#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG
-#define NVM_OPTIMIZE
+//#define NVM_OPTIMIZE
 
 #ifdef NVM_OPTIMIZE
 #define BATCHSIZE 4*1024*1024
+#define CHUNK_VMACACHESZ 256
 #endif
 
 //Currently restrict the write to less than one page
@@ -111,6 +112,81 @@ unsigned int jenkin_hash(char *key, unsigned int len)
     return (unsigned int)hash;
 }
 
+#ifdef NVM_OPTIMIZE
+void *nvpage_start = NULL;
+unsigned int nvpage_used;
+unsigned long chunkid_vma_cache[CHUNK_VMACACHESZ];
+unsigned int vmacache_cnt;	
+
+void add_to_chunk_cache(struct nv_chunk *chunk, unsigned int vmaid){
+
+	//if(CHUNK_VMACACHESZ > vmacache_cnt) {
+		int idx = vmaid % CHUNK_VMACACHESZ;
+		chunkid_vma_cache[idx] = (unsigned long)chunk;
+		vmacache_cnt++;
+	//}
+}
+
+struct nv_chunk *get_frm_chunk_cache(unsigned int vmaid){
+
+	int idx = vmaid % CHUNK_VMACACHESZ;
+	struct nv_chunk *chunk=NULL;
+
+	if (idx > vmacache_cnt) 
+		return NULL;
+
+	chunk = (struct nv_chunk *)chunkid_vma_cache[idx];
+
+	if (chunk && (chunk->vma_id == vmaid))
+		return chunk;
+
+	return NULL;
+}
+
+void clear_chunk_cache(void) {
+
+	int idx=0;
+
+	for ( idx =0; idx < CHUNK_VMACACHESZ; idx++){
+		chunkid_vma_cache[idx]=0;
+	}
+	vmacache_cnt = 0;
+}
+
+/*Large kmalloc allocation avoids and reduces 
+ * TLB miss
+ * TODO: the nvpage_start should be per process 
+ * instead of one global varialbe*/
+void *large_nvstruct_alloc(void){
+
+	void *ptr = NULL;
+	int nvpagesize = sizeof(struct nvpage);
+
+	if(!nvpage_start){
+		nvpage_start = kmalloc(BATCHSIZE , GFP_KERNEL);
+		if(!nvpage_start) {
+			printk(KERN_ALERT "NVM_OPTIMIZE large_nvstruct_alloc "
+					"Cannot alloc %u \n",BATCHSIZE);
+			goto err_nvstruct_alloc;
+		}	
+		nvpage_used = 0;
+	}
+    ptr  = nvpage_start + nvpage_used;
+	nvpage_used = nvpage_used + nvpagesize;
+	return ptr;
+
+err_nvstruct_alloc:	
+	return NULL;
+}
+
+void large_nvstruct_free(void){
+	if(nvpage_start) {
+		kfree(nvpage_start);
+		nvpage_start=NULL;
+		nvpage_used=0;
+	}
+}
+#endif
 
 
 /*--------------------------------------------------------------------------------------*/
@@ -166,8 +242,6 @@ struct nv_proc_obj *find_proc_obj( unsigned int proc_id ) {
     struct nv_proc_obj *tmp_proc_obj = NULL;
     struct list_head *pos = NULL;
 
-    //spin_lock(&nv_proclist_lock);
-
     pos = &nv_proc_objlist;
      
 	if(!proc_list_init_flag){
@@ -177,7 +251,6 @@ struct nv_proc_obj *find_proc_obj( unsigned int proc_id ) {
 
      list_for_each_entry_safe( proc_obj,tmp_proc_obj, pos, head_proc) {
 	 	if ( proc_obj &&  proc_obj->pid == proc_id ) { 
-			 //spin_unlock(&nv_proclist_lock);
            	 return proc_obj;
 		}
      }
@@ -185,7 +258,6 @@ struct nv_proc_obj *find_proc_obj( unsigned int proc_id ) {
   	 printk("find_proc_obj: no such process \n");
 #endif
 proc_error:
-	//spin_unlock(&nv_proclist_lock);
     return NULL;
 }
 EXPORT_SYMBOL(find_proc_obj);
@@ -437,6 +509,9 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 	struct rb_root *root = NULL ;
     struct rb_node *node = NULL; 
     unsigned int chunkid;
+#ifdef NVM_OPTIMIZE
+	struct nv_chunk *chunk=NULL;
+#endif
 
 #ifdef LOCAL_DEBUG_FLAG 
 	printk( "find_chunk vma_id:%u \n",vma_id);
@@ -458,6 +533,8 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 #endif
 		goto find_chunk_error;
 	}
+
+
     root = &proc_obj->chunk_tree;
 	if(!root){
 		printk("find_chunk: root is null \n");
@@ -468,6 +545,15 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 		printk("find_chunk: node is null \n");
 		goto find_chunk_error;
 	}
+
+#ifdef NVM_OPTIMIZE_1
+	chunk = (struct nv_chunk *)get_frm_chunk_cache(vma_id);
+
+	if(chunk && (chunk->vma_id == vma_id))
+		return chunk;
+#endif
+
+
     while (node) {
         struct nv_chunk *this = rb_entry(node, struct nv_chunk, rb_chunknode);
         if(!this) {
@@ -491,7 +577,6 @@ find_chunk_error:
     printk( "find_chunk: could not find chunk\n");
 #endif
 	return NULL;
-
 }
 
 /*add the chunk to process object*/
@@ -536,6 +621,10 @@ static int add_chunk(struct nv_chunk *chunk, struct nv_proc_obj *proc_obj) {
     /* Add new node and rebalance tree. */
     rb_link_node(&chunk->rb_chunknode, parent, new);
     rb_insert_color(&chunk->rb_chunknode, root);
+
+#ifdef NVM_OPTIMIZE_1
+	add_to_chunk_cache(chunk, chunk->vma_id);
+#endif
 
     //set the process obj to which chunk belongs 
     chunk->proc_obj = proc_obj;
@@ -659,47 +748,19 @@ unsigned int find_offset(struct vm_area_struct *vma, unsigned long addr) {
 }
 
 #ifdef NVM_OPTIMIZE
-void *nvpage_start = NULL;
-unsigned int nvpage_used;
-
-/*Large kmalloc allocation avoids and reduces 
- * TLB miss
- * TODO: the nvpage_start should be per process 
- * instead of one global varialbe*/
-void *large_nvstruct_alloc(){
-
-	void *ptr = NULL;
-	int nvpagesize = sizeof(struct nvpage);
-
-	if(!nvpage_start){
-		nvpage_start = kmalloc(BATCHSIZE , GFP_KERNEL);
-		if(!nvpage_start) {
-			printk(KERN_ALERT "NVM_OPTIMIZE large_nvstruct_alloc "
-					"Cannot alloc %u \n",BATCHSIZE);
-			goto err_nvstruct_alloc;
-		}	
-		nvpage_used = 0;
-	}
-    ptr  = nvpage_start + nvpage_used;
-	nvpage_used = nvpage_used + nvpagesize;
-	return ptr;
-
-err_nvstruct_alloc:	
-	return NULL;
-}
-
-void large_nvstruct_free(){
-	if(nvpage_start) {
-		kfree(nvpage_start);
-		nvpage_start=NULL;
-		nvpage_used=0;
-	}
-}
+unsigned int cache_insrt_procid;
+unsigned int cache_insrt_vmaid;
+struct rb_node **cache_insrt_node;
+unsigned int cache_insrt_pgoff;
 #endif
 
-
 /*add pages to rbtree node */
+#ifdef NVM_OPTIMIZE_1
+int insert_page_rbtree(struct rb_root *root, struct page *page, 
+						unsigned int vmaid, unsigned int procid){
+#else
 int insert_page_rbtree(struct rb_root *root, struct page *page){
+#endif
 
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 	struct nvpage *nvpage = NULL;
@@ -713,63 +774,133 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 		printk("insert_page_rbtree: nvpage struct alloc failed \n");
 		return -1;
 	}
+
 	nvpage->page = page;
+
 	if(!(nvpage->page)){
 		printk("insert_page_rbtree: page to insert NULL \n");
 		return -1;
 	}
+
+#ifdef NVM_OPTIMIZE_1
+	if(cache_insrt_procid == procid && 
+		cache_insrt_vmaid == vmaid &&
+		cache_insrt_node && cache_insrt_pgoff){
+
+		if( cache_insrt_pgoff < nvpage->page->nvpgoff)
+				new = cache_insrt_node;
+	}else {
+		cache_insrt_procid = procid;
+		cache_insrt_vmaid = vmaid;
+		cache_insrt_node = new;
+		cache_insrt_pgoff = nvpage->page->nvpgoff;
+	}
+#endif
+
 	/* Figure out where to put new node */
 	while (*new) {
+
 		struct nvpage *this = rb_entry(*new, struct nvpage, rbnode);
 		parent = *new;
+
 		if(!this || !this->page) {
 #ifdef LOCAL_DEBUG_FLAG
 			printk("insert_page_rbtree: chunk rbtree not initialized \n");
 #endif
 			return -1;
 		}
+
 		if (nvpage->page->nvpgoff < this->page->nvpgoff) {
 			new = &((*new)->rb_left);
 		}else if (nvpage->page->nvpgoff > this->page->nvpgoff){
 			new = &((*new)->rb_right);
 		}else{
+
 #ifdef LOCAL_DEBUG_FLAG
 			printk("insert_page_rbtree: already exists, do nothing \n");
 #endif
 			return 0;
 		}
 	}
+
 	/* Add new node and rebalance tree. */
 	rb_link_node(&nvpage->rbnode, parent, new);
 	rb_insert_color(&nvpage->rbnode, root);
+
+#ifdef NVM_OPTIMIZE_1
+	cache_insrt_node = new;
+#endif
+
 #ifdef LOCAL_DEBUG_FLAG
 	printk("insert_page_rbtree: success\n");
 #endif
 	return 0;
 }
 
+#ifdef NVM_OPTIMIZE
+unsigned int cache_srch_procid;
+unsigned int cache_srch_vmaid;
+struct rb_node *cache_srch_node;
+unsigned int cache_srch_pgoff;
+#endif
 
+
+#ifdef NVM_OPTIMIZE_1
+struct page *search_page_rbtree(struct rb_root *root, 
+								unsigned int nvpgoff, 
+								unsigned int vmaid, 
+								unsigned int procid) {
+#else
 struct page *search_page_rbtree(struct rb_root *root, unsigned int nvpgoff){
+#endif
 
 	struct rb_node *node = root->rb_node;
 	unsigned int offset;
+	struct page *page;
+
+#ifdef NVM_OPTIMIZE_1
+    if(cache_srch_procid == procid &&
+        cache_srch_vmaid == vmaid &&
+        cache_srch_node && 
+		cache_srch_pgoff < nvpgoff){
+
+        	node = cache_srch_node;
+    }
+#endif
 
 	while (node) {
+
 		struct nvpage *this = rb_entry(node, struct nvpage, rbnode);
+
 		if(!this || this->page == NULL) {
 #ifdef LOCAL_DEBUG_FLAG
 			printk("search_page_rbtree: chunk rbtree not initialized \n");
 #endif
 			return NULL;
 		}
+
 		offset = this->page->nvpgoff;
-		if( nvpgoff == offset) 
-			return this->page;
+
+		if( nvpgoff == offset) {
+			page = this->page;
+			goto ret_search_page;
+		}
 		if ( nvpgoff < offset) 
             node = node->rb_left;
         else if (nvpgoff > offset)
             node = node->rb_right;
 	}
+
+#ifdef NVM_OPTIMIZE_1
+	cache_srch_procid = procid;
+	cache_srch_vmaid = vmaid;
+	cache_srch_node = node;
+	cache_srch_pgoff = page->nvpgoff;
+#endif
+
+ret_search_page:
+	return page;
+
 	return NULL;
 }
 
@@ -826,7 +957,12 @@ int add_pages_to_chunk(struct vm_area_struct *vma, struct page *page, unsigned l
 	nvpgoff =  find_offset(vma, addr);
 	page->nvpgoff = nvpgoff;
 
+#ifdef NVM_OPTIMIZE_1
+	if(insert_page_rbtree( &chunk->page_tree, page, chunk_id, proc_id)) {
+#else
 	if(insert_page_rbtree( &chunk->page_tree, page)) {
+#endif
+
 #ifdef LOCAL_DEBUG_FLAG
 		printk("inserting page with offset %d failed \n",page->nvpgoff);
 #endif
@@ -917,7 +1053,6 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
 {
 	struct nv_chunk *chunk = NULL;
 	struct page *page = NULL;
-	char *buffer = NULL;
 	unsigned int hash=0;
 	struct nv_proc_obj *proc_obj;
 
@@ -944,11 +1079,11 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
 		goto err_nv_faultpg;	
 	}
 
-/*#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE
 	 if( chunk->max_pg_offset < pg_off ) {
 		goto err_nv_faultpg;
 	}
-#endif*/
+#endif
 
 	/*get the page from corresponsing offset*/
 	if ( (page = get_page_frm_chunk(chunk, pg_off)) == NULL){
@@ -1107,7 +1242,13 @@ struct page* get_page_frm_chunk(struct nv_chunk *chunk, long pg_off){
 		goto page_frm_chunk_err;
 	}
 
+#ifdef NVM_OPTIMIZE_1
+	page = search_page_rbtree(&chunk->page_tree, pg_off, 
+								chunk->vma_id, chunk->proc_id);
+#else
 	page = search_page_rbtree(&chunk->page_tree, pg_off);
+#endif
+
     if(!page){   
   		goto page_frm_chunk_err;
 	}
@@ -1228,6 +1369,11 @@ asmlinkage long sys_nvpoolcreate( unsigned long num_pool_pages)
 
     if(!num_pool_pages)
         return -1;
+
+#ifdef NVM_OPTIMIZE
+	clear_chunk_cache();
+#endif
+
     //RESERVE NV mem pool
 	printk("nvpoolcreate: allocate request for %lu \n",num_pool_pages);
     status = alloc_fresh_nv_pages( NULL, num_pool_pages);
@@ -1596,12 +1742,11 @@ struct page *clear_page_data(struct rb_root *root){
         }
 	    //printk("clear_page_data: clearing page %u\n", this->page->nvpgoff);
 
-		spin_lock(&nv_proclist_lock);
+		//spin_lock(&nv_proclist_lock);
         rb_erase(node, root);
-		//printk("clear_page_data: Calling clear_page(this->page) \n");
 		//clear_page(this->page);	
         add_to_free_nvlist(this->page); 
-		spin_unlock(&nv_proclist_lock);
+		//spin_unlock(&nv_proclist_lock);
      }	
     return NULL;
 }
@@ -1643,6 +1788,7 @@ struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
 
 #ifdef NVM_OPTIMIZE
 	large_nvstruct_free();
+	clear_chunk_cache();
 #endif 
 
 	delete_proc_obj(proc_obj);

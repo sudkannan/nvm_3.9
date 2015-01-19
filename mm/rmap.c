@@ -1104,7 +1104,7 @@ void page_add_new_anon_rmap(struct page *page,
 		__inc_zone_page_state(page, NR_ANON_TRANSPARENT_HUGEPAGES);
 	__page_set_anon_rmap(page, vma, address, 1);
 
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
     if(test_bit(PG_nvram, &page->flags) && !mlocked_vma_newpage(vma, page)) {
 		//printk(KERN_ALERT "adding to NVM lru \n");
         //lru_cache_add_lru(page, LRU_ACTIVE_NVMANON);

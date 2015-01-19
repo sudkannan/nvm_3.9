@@ -553,7 +553,7 @@ void putback_lru_page(struct page *page)
 redo:
 	ClearPageUnevictable(page);
 
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
     if(test_bit(PG_nvram, &page->flags)) {
 		//lru = LRU_ACTIVE_NVMANON;
 		//printk(KERN_ALERT "adding to NVM lru \n");
@@ -1450,7 +1450,7 @@ static void move_active_pages_to_lru(struct lruvec *lruvec,
 		__count_vm_events(PGDEACTIVATE, pgmoved);
 }
 
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 static void get_active_nvm_pages(struct list_head *list){
 
 	struct page *page;
@@ -1557,7 +1557,7 @@ static void shrink_active_list(unsigned long nr_to_scan,
 	reclaim_stat->recent_rotated[file] += nr_rotated;
 
 	move_active_pages_to_lru(lruvec, &l_active, &l_hold, lru);
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 	get_active_nvm_pages(&l_active);
 #endif
 	move_active_pages_to_lru(lruvec, &l_inactive, &l_hold, lru - LRU_ACTIVE);

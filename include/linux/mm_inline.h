@@ -3,7 +3,9 @@
 
 #include <linux/huge_mm.h>
 
+#ifdef CONFIG_NVM_1
 static unsigned int nr_active_nvmpgs;
+#endif
 
 /**
  * page_is_file_cache - should the page be on a file LRU or anon LRU?
@@ -29,7 +31,7 @@ static __always_inline void add_page_to_lru_list(struct page *page,
 	int nr_pages = hpage_nr_pages(page);
 	mem_cgroup_update_lru_size(lruvec, lru, nr_pages);
 	list_add(&page->lru, &lruvec->lists[lru]);
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 	if(NR_LRU_BASE + lru == NR_ACTIVE_ANON){
         if(test_bit(PG_nvram, &page->flags)) {
             nr_active_nvmpgs++;

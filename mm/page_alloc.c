@@ -64,7 +64,7 @@
 #include <asm/div64.h>
 #include "internal.h"
 
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 static unsigned int nvm_freed_pgcnt;
 #endif
 
@@ -1405,13 +1405,13 @@ skip:
 		pcp->count -= pcp->batch;
 	}
 
-//#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 	if(test_bit(PG_nvram, &page->flags)) {
 		test_and_clear_bit(PG_nvram, &page->flags);
 		nvm_freed_pgcnt++;
 		printk("freeing a NVM page %u\n", nvm_freed_pgcnt);
    }		
-//#endif
+#endif
 
 out:
 	local_irq_restore(flags);

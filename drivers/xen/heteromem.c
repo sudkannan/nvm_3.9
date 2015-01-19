@@ -428,7 +428,7 @@ struct page* get_from_usedpage_list() {
 }
 
 
-int send_hotpage_skiplist()
+int send_hotpage_skiplist(void)
 {
 		enum bp_state state = BP_DONE;
 		unsigned long  pfn, i;

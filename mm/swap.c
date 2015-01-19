@@ -33,7 +33,7 @@
 
 #include "internal.h"
 
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 static unsigned int nr_active_nvmpgs;
 #endif
 
@@ -485,7 +485,7 @@ void lru_cache_add_lru(struct page *page, enum lru_list lru)
 {
 	if (PageActive(page)) {
 
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 		if(test_bit(PG_nvram, &page->flags)) {	
 			nr_active_nvmpgs++;
 			//printk(KERN_ALERT "num active nvm pages: %u\n",nr_active_nvmpgs);

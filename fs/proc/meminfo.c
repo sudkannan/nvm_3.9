@@ -63,7 +63,7 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		"Inactive:       %8lu kB\n"
 		"Active(anon):   %8lu kB\n"
 		"Inactive(anon): %8lu kB\n"
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 		"NVMActive(anon): %8lu kB\n"
 		"NVMInactive(anon):%8lu kB\n"
 #endif
@@ -120,7 +120,7 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
 		K(pages[LRU_INACTIVE_ANON] + pages[LRU_INACTIVE_FILE]),
 		K(pages[LRU_ACTIVE_ANON]),
 		K(pages[LRU_INACTIVE_ANON]),
-#ifdef CONFIG_NVM
+#ifdef CONFIG_NVM_1
 		K(pages[LRU_ACTIVE_NVMANON]),
 		K(pages[LRU_INACTIVE_NVMANON]),
 #endif
