@@ -5076,7 +5076,7 @@ static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
 		//spin_unlock(&nv_pagelist_lock);
 		return NULL;
    }
-#ifndef DEBUG_STATS
+#ifdef DEBUG_STATS
 	tot_nvpgs_used++;
 	if(tot_nvpgs_used % 1000 == 0)
 		printk("total allocated nv_pages %u \n",tot_nvpgs_used);
