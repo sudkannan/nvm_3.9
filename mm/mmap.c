@@ -40,7 +40,7 @@
 #include "internal.h"
 
 //#define LOCAL_DEBUG_FLAG_1
-#define _DISABLE_PVM_MERGE
+//#define _DISABLE_PVM_MERGE
 
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)

@@ -44,9 +44,11 @@
 //#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG
-//#define NVM_OPTIMIZE
+#define NVM_OPTIMIZE_1
+#define NVM_OPTIMIZE_2
+//#define NVM_OPTIMIZE_3
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_2
 #define BATCHSIZE 4*1024*1024
 #define CHUNK_VMACACHESZ 256
 #endif
@@ -112,7 +114,7 @@ unsigned int jenkin_hash(char *key, unsigned int len)
     return (unsigned int)hash;
 }
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_2
 void *nvpage_start = NULL;
 unsigned int nvpage_used;
 unsigned long chunkid_vma_cache[CHUNK_VMACACHESZ];
@@ -509,7 +511,7 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 	struct rb_root *root = NULL ;
     struct rb_node *node = NULL; 
     unsigned int chunkid;
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_2
 	struct nv_chunk *chunk=NULL;
 #endif
 
@@ -546,7 +548,7 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 		goto find_chunk_error;
 	}
 
-#ifdef NVM_OPTIMIZE_1
+#ifdef NVM_OPTIMIZE_2
 	chunk = (struct nv_chunk *)get_frm_chunk_cache(vma_id);
 
 	if(chunk && (chunk->vma_id == vma_id))
@@ -622,7 +624,7 @@ static int add_chunk(struct nv_chunk *chunk, struct nv_proc_obj *proc_obj) {
     rb_link_node(&chunk->rb_chunknode, parent, new);
     rb_insert_color(&chunk->rb_chunknode, root);
 
-#ifdef NVM_OPTIMIZE_1
+#ifdef NVM_OPTIMIZE_2
 	add_to_chunk_cache(chunk, chunk->vma_id);
 #endif
 
@@ -747,15 +749,45 @@ unsigned int find_offset(struct vm_area_struct *vma, unsigned long addr) {
 	return pg_off;
 }
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_3
 unsigned int cache_insrt_procid;
 unsigned int cache_insrt_vmaid;
-struct rb_node **cache_insrt_node;
+struct rb_node *cache_insrt_node;
 unsigned int cache_insrt_pgoff;
 #endif
 
+
+#ifdef NVM_OPTIMIZE_3
+struct nvpage *insrt_page_cache_node(unsigned int nvpgoff,
+							unsigned int vmaid,
+							unsigned int procid){
+
+	struct rb_node *temp = NULL;
+	struct nvpage *nxtpg= NULL;
+
+    if(procid && vmaid && (cache_insrt_procid == procid) &&
+        (cache_insrt_vmaid == vmaid) &&
+        cache_insrt_node && 
+		cache_insrt_pgoff+1 == nvpgoff){
+
+		temp = rb_next(cache_insrt_node);
+
+		if(temp)	
+			nxtpg = rb_entry(temp, struct nvpage, rbnode);
+
+		if(nxtpg && nxtpg->page && nxtpg->page->nvpgoff == nvpgoff) {
+			cache_insrt_node = &nxtpg->rbnode;
+			cache_insrt_pgoff = nxtpg->page->nvpgoff;
+			return nxtpg;				
+		}
+    }
+	return NULL;	
+}
+#endif
+
+
 /*add pages to rbtree node */
-#ifdef NVM_OPTIMIZE_1
+#ifdef NVM_OPTIMIZE_3
 int insert_page_rbtree(struct rb_root *root, struct page *page, 
 						unsigned int vmaid, unsigned int procid){
 #else
@@ -765,7 +797,7 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 	struct nvpage *nvpage = NULL;
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_2_3
 	nvpage =large_nvstruct_alloc();
 	if(!nvpage)
 #endif
@@ -782,18 +814,12 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 		return -1;
 	}
 
-#ifdef NVM_OPTIMIZE_1
-	if(cache_insrt_procid == procid && 
-		cache_insrt_vmaid == vmaid &&
-		cache_insrt_node && cache_insrt_pgoff){
-
-		if( cache_insrt_pgoff < nvpage->page->nvpgoff)
-				new = cache_insrt_node;
-	}else {
-		cache_insrt_procid = procid;
-		cache_insrt_vmaid = vmaid;
-		cache_insrt_node = new;
-		cache_insrt_pgoff = nvpage->page->nvpgoff;
+#ifdef NVM_OPTIMIZE_3
+	struct nvpage *tmpnvpage = NULL;
+	tmpnvpage = insrt_page_cache_node(nvpage->page->nvpgoff, vmaid, procid);
+	if(tmpnvpage && tmpnvpage->page &&  
+			(tmpnvpage->page->nvpgoff ==  page->nvpgoff)) {
+		*new = &tmpnvpage->rbnode;
 	}
 #endif
 
@@ -815,9 +841,15 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 		}else if (nvpage->page->nvpgoff > this->page->nvpgoff){
 			new = &((*new)->rb_right);
 		}else{
-
 #ifdef LOCAL_DEBUG_FLAG
 			printk("insert_page_rbtree: already exists, do nothing \n");
+#endif
+
+#ifdef NVM_OPTIMIZE_3
+			cache_insrt_procid = procid;
+			cache_insrt_vmaid = vmaid;
+			cache_insrt_node = *new;
+			cache_insrt_pgoff = nvpage->page->nvpgoff;
 #endif
 			return 0;
 		}
@@ -826,24 +858,51 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 	/* Add new node and rebalance tree. */
 	rb_link_node(&nvpage->rbnode, parent, new);
 	rb_insert_color(&nvpage->rbnode, root);
-
-#ifdef NVM_OPTIMIZE_1
-	cache_insrt_node = new;
-#endif
-
 #ifdef LOCAL_DEBUG_FLAG
 	printk("insert_page_rbtree: success\n");
 #endif
 	return 0;
 }
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_1
 unsigned int cache_srch_procid;
 unsigned int cache_srch_vmaid;
 struct rb_node *cache_srch_node;
 unsigned int cache_srch_pgoff;
-#endif
 
+struct page *search_cache_page(unsigned int nvpgoff,
+							unsigned int vmaid,
+							unsigned int procid){
+
+	struct rb_node *temp = NULL;
+	struct nvpage *nxtpg= NULL;
+
+    if(procid && vmaid && (cache_srch_procid == procid) &&
+        (cache_srch_vmaid == vmaid) &&
+        cache_srch_node && 
+		cache_srch_pgoff+1 == nvpgoff){
+
+		temp = rb_next(cache_srch_node);
+
+		if(temp)	
+			nxtpg = rb_entry(temp, struct nvpage, rbnode);
+
+		if(nxtpg && nxtpg->page && nxtpg->page->nvpgoff == nvpgoff) {
+			cache_srch_node = &nxtpg->rbnode;
+			cache_srch_pgoff = nxtpg->page->nvpgoff;
+			return nxtpg->page;				
+		}
+    }
+	return NULL;	
+	
+	/*printk("cache_srch_procid %u procid %u "
+			"cache_srch_vmaid %u : vmaid %u "
+			"cache_srch_pgoff %u : nvpgoff %u "
+			"cache_srch_node %lu \n",
+			cache_srch_procid, procid, cache_srch_vmaid,
+			vmaid, cache_srch_pgoff, nvpgoff,cache_srch_node);*/
+}
+#endif
 
 #ifdef NVM_OPTIMIZE_1
 struct page *search_page_rbtree(struct rb_root *root, 
@@ -856,16 +915,13 @@ struct page *search_page_rbtree(struct rb_root *root, unsigned int nvpgoff){
 
 	struct rb_node *node = root->rb_node;
 	unsigned int offset;
-	struct page *page;
+	struct page *page = NULL;
 
 #ifdef NVM_OPTIMIZE_1
-    if(cache_srch_procid == procid &&
-        cache_srch_vmaid == vmaid &&
-        cache_srch_node && 
-		cache_srch_pgoff < nvpgoff){
+	page = search_cache_page(nvpgoff,  vmaid, procid);
 
-        	node = cache_srch_node;
-    }
+	if(page)
+		return page;
 #endif
 
 	while (node) {
@@ -883,25 +939,41 @@ struct page *search_page_rbtree(struct rb_root *root, unsigned int nvpgoff){
 
 		if( nvpgoff == offset) {
 			page = this->page;
+
+#ifdef NVM_OPTIMIZE_1
+		
+		cache_srch_procid = procid;
+		cache_srch_vmaid = vmaid;
+
+		if(node){
+			cache_srch_node = node;
+		}
+		else{
+			cache_srch_node = NULL;
+		}
+
+		if(page){
+		 	cache_srch_pgoff = page->nvpgoff;
+		 }	
+#endif
 			goto ret_search_page;
 		}
+
 		if ( nvpgoff < offset) 
             node = node->rb_left;
         else if (nvpgoff > offset)
             node = node->rb_right;
 	}
-
 #ifdef NVM_OPTIMIZE_1
-	cache_srch_procid = procid;
-	cache_srch_vmaid = vmaid;
-	cache_srch_node = node;
-	cache_srch_pgoff = page->nvpgoff;
+	cache_srch_node = NULL;
 #endif
+
+	return NULL;
 
 ret_search_page:
 	return page;
 
-	return NULL;
+
 }
 
 
@@ -957,7 +1029,7 @@ int add_pages_to_chunk(struct vm_area_struct *vma, struct page *page, unsigned l
 	nvpgoff =  find_offset(vma, addr);
 	page->nvpgoff = nvpgoff;
 
-#ifdef NVM_OPTIMIZE_1
+#ifdef NVM_OPTIMIZE_3
 	if(insert_page_rbtree( &chunk->page_tree, page, chunk_id, proc_id)) {
 #else
 	if(insert_page_rbtree( &chunk->page_tree, page)) {
@@ -1370,7 +1442,7 @@ asmlinkage long sys_nvpoolcreate( unsigned long num_pool_pages)
     if(!num_pool_pages)
         return -1;
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_1
 	clear_chunk_cache();
 #endif
 
@@ -1781,12 +1853,12 @@ struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
 
 		clear_page_data(&this->page_tree);
 		rb_erase(node, root);
-#ifndef NVM_OPTIMIZE
+#ifndef NVM_OPTIMIZE_2
 		delete_nvchunk(this);
 #endif
     }
 
-#ifdef NVM_OPTIMIZE
+#ifdef NVM_OPTIMIZE_2
 	large_nvstruct_free();
 	clear_chunk_cache();
 #endif 

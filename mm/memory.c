@@ -4002,7 +4002,7 @@ int handle_pte_fault(struct mm_struct *mm,
 	}
 
 	if ( vma->persist_flags == PERSIST_VMA_FLAG ){
-		printk(KERN_ALERT "persistent memory unexpected condition\n");	
+		//printk(KERN_ALERT "persistent memory unexpected condition\n");	
 	}
 
 
@@ -4719,6 +4719,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return VM_FAULT_SIGBUS;
 	}
 
+#if 0
     /* Use the zero-page for reads */
     if (!(flags & FAULT_FLAG_WRITE)) {
 #if 0
@@ -4741,7 +4742,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			goto update_pgtable;
 		}
     }
-
+#endif
 
 write_fault:
 	/* Allocate our own private page. */
@@ -4752,17 +4753,21 @@ write_fault:
 
 		if(!vma->noPersist) {
 
+			//printk(KERN_ALERT "using persist vma \n");	
 		    page = get_nv_faultpg(vma, address, &err);
 
 			if(!page) {
 				page =  nv_alloc_page_numa( vma);
 				if(page){
 				   set_bit(PG_nvram, &page->flags);
+				   set_bit(PG_locked, &page->flags);	
+				   atomic_inc(&page->_count);
 				   add_pages_to_chunk( vma, page, address);
 				}
 
 			}else {
 				atomic_inc(&page->_count);
+				set_bit(PG_nvram, &page->flags);
 				page_reuse=1;
 			}
 		}else {
@@ -4770,6 +4775,8 @@ write_fault:
 			page =  nv_alloc_page_numa( vma);
 			if(!page) {
 				page = alloc_zeroed_user_highpage_movable(vma, address);
+			}else {
+				atomic_inc(&page->_count);
 			}
 #ifndef NV_JIT_ALLOC	
 			set_bit(PG_nvram, &page->flags);
@@ -4786,6 +4793,7 @@ update_pgtable:
         /*set the page update flag holding the smp_wmb(); */
 	__SetPageUptodate(page);
 
+#if 1		
 	if(!(page->nvdirty)){
 
 		page->nvdirty = PG_reuse;
@@ -4794,6 +4802,7 @@ update_pgtable:
 		if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
 			goto oom_free_page;
 	}
+#endif
 
 	entry = mk_pte(page, vma->vm_page_prot);
 	if (vma->vm_flags & VM_WRITE)
@@ -5081,7 +5090,6 @@ static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
 	if(tot_nvpgs_used % 1000 == 0)
 		printk("total allocated nv_pages %u \n",tot_nvpgs_used);
 #endif
-	atomic_inc(&page->_count);
 	//atomic_inc(&page->_count);
 	//spin_unlock(&nv_pagelist_lock);
    return page;
@@ -5154,6 +5162,7 @@ get_from_nvlist:
 
 #ifdef NV_JIT_ALLOC
 get_frm_jit_alloc:
+	//printk("using JIT alloc \n");	
 	if(!page) {
 	    nodeid = find_persistent_node();
     	page = nv_alloc_fresh_page_node(nodeid,PAGE_SIZE);
