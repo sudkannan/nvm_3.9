@@ -71,7 +71,7 @@
 #define HETEROMEM
 #define HETEROMEM_PGS 100000
 /*reduce the balloon pages by ratio*/
-#define HETERO_RATIO 4
+#define HETERO_RATIO 32
 //#define HETERODEBUG
 
 /* List of ballooned pages, threaded through the mem_map array. */

@@ -40,11 +40,11 @@
 #include <xen/heteromem.h>
 
 
-//#define HETEROMEM
+#define HETEROMEM
 //#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG
-#define NVM_OPTIMIZE_1
+//#define NVM_OPTIMIZE_1
 #define NVM_OPTIMIZE_2
 //#define NVM_OPTIMIZE_3
 

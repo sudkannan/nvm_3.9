@@ -81,7 +81,7 @@
 #include <xen/page.h>
 
 
-//#define HETEROMEM
+#define HETEROMEM
 #define SETNVMPAGEBIT 
 #define _NV_CODE_DEBUG
 //#define _BIGNV_LOCK
@@ -89,7 +89,8 @@
 #define PG_reuse 9
 
 static unsigned int del_dirtypgcnt;
-//#define NV_JIT_ALLOC
+#define NV_JIT_ALLOC
+//#define HETERO_JIT
 //#define LOCAL_DEBUG_FLAG
 //#define DEBUG_STATS
 /*---Global variales--*/
@@ -4755,7 +4756,6 @@ write_fault:
 
 			//printk(KERN_ALERT "using persist vma \n");	
 		    page = get_nv_faultpg(vma, address, &err);
-
 			if(!page) {
 				page =  nv_alloc_page_numa( vma);
 				if(page){
@@ -4763,8 +4763,9 @@ write_fault:
 				   set_bit(PG_locked, &page->flags);	
 				   atomic_inc(&page->_count);
 				   add_pages_to_chunk( vma, page, address);
+				}else {
+					goto oom;
 				}
-
 			}else {
 				atomic_inc(&page->_count);
 				set_bit(PG_nvram, &page->flags);
@@ -4774,7 +4775,8 @@ write_fault:
 			/*we require no persistent pages from NVRAM*/
 			page =  nv_alloc_page_numa( vma);
 			if(!page) {
-				page = alloc_zeroed_user_highpage_movable(vma, address);
+				//page = alloc_zeroed_user_highpage_movable(vma, address);
+				goto oom;
 			}else {
 				atomic_inc(&page->_count);
 			}
@@ -5123,7 +5125,9 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 	struct page *page = NULL, *tmp = NULL;
     int ret = 0, nodeid=0;
 
+#ifndef HETERO_JIT
 	BUG_ON(!vma);
+#endif
 
 #ifdef _NV_LOCKS
 	spin_lock(&nvpagelock);
@@ -5131,6 +5135,10 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 
 #ifdef HETEROMEM
 	goto get_frm_hetero;
+#endif
+
+#ifdef HETERO_JIT
+	goto get_frm_jit_alloc;
 #endif
 
 #ifdef NV_JIT_ALLOC

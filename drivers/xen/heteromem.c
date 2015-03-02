@@ -81,8 +81,9 @@ Also all code related to hotplug has been removed */
 #define XENMEMF_hetero_mem_request  (1<<18)
 #define XENMEMF_hetero_stop_hotpage_scan (1<<19)
 
-#define MAX_HOT_MFN 16384
-#define MAX_MIGRATE 8192
+#define MAX_HOT_MFN 262144
+#define MAX_MIGRATE 262144
+//#define HETERO_JIT
 
 /*
  * heteromem_process() state:
@@ -124,6 +125,9 @@ static LIST_HEAD(heteromemed_pages);
 static LIST_HEAD(hetero_ready_lst_pgs);
 /*pages which needs to be deleted*/
 static LIST_HEAD(hetero_used_lst_pgs);
+
+/*initialize hetero ready page list*/
+static unsigned int g_hetero_ready;
 
 /*hetero ready page list count*/
 static unsigned int ready_lst_pgcnt;
@@ -282,11 +286,16 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		return BP_EAGAIN; 
 	}
 
+	 if (!g_hetero_ready ) {
+    	 INIT_LIST_HEAD(&hetero_ready_lst_pgs);
+	     g_hetero_ready = 1;
+	 }
+
 	//if (nr_pages > ARRAY_SIZE(hetero_frame_list))
 		//nr_pages = ARRAY_SIZE(hetero_frame_list);
 	nr_pages = MAX_HOT_MFN;
-
 	page = heteromem_first_page();
+
 	for (i = 0; i < nr_pages; i++) {
 		if (!page) {
 			nr_pages = i;
@@ -296,24 +305,23 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		page = heteromem_next_page(page);
 	}
 
-
-		/*Setting the heteromem request flag used in hypervisor*/
-		reservation.mem_flags = reservation.mem_flags|XENMEMF_hetero_mem_request;
-		/*HETEROFIX: HARDCODE*/
-    	reservation.mem_flags = reservation.mem_flags|XENMEMF_node(1);
+	/*Setting the heteromem request flag used in hypervisor*/
+	reservation.mem_flags = reservation.mem_flags|XENMEMF_hetero_mem_request;
+	/*HETEROFIX: HARDCODE*/
+    reservation.mem_flags = reservation.mem_flags|XENMEMF_node(1);
 	
-		set_xen_guest_handle(reservation.extent_start, hetero_frame_list);
-		reservation.nr_extents = nr_pages;
+	set_xen_guest_handle(reservation.extent_start, hetero_frame_list);
+	reservation.nr_extents = nr_pages;
 
-		rc = HYPERVISOR_memory_op(XENMEM_hetero_populate_physmap, &reservation);
-		if (rc <= 0){
-			printk(KERN_DEBUG "XENMEM_populate_physmap failed %d\n", rc);
-			return BP_EAGAIN;
-		}
-#ifdef HETERODEBUG
-		printk(KERN_DEBUG "XENMEM_hetero_populate_physmap succeeded for "
-					  "%u pages \n", nr_pages);
-		printk(KERN_DEBUG "reserv done for rc %d pages, nr_pages %lu\n",rc, nr_pages);
+	rc = HYPERVISOR_memory_op(XENMEM_hetero_populate_physmap, &reservation);
+	if (rc <= 0){
+		printk(KERN_DEBUG "XENMEM_populate_physmap failed %d\n", rc);
+		return BP_EAGAIN;
+	}
+#ifndef HETERODEBUG
+	printk(KERN_ALERT "XENMEM_hetero_populate_physmap succeeded for "
+				  "%u pages \n", nr_pages);
+	printk(KERN_ALERT "reserv done for rc %d pages, nr_pages %lu\n",rc, nr_pages);
 #endif
 
 	for (i = 0; i < rc; i++) {
@@ -325,12 +333,12 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		       phys_to_machine_mapping_valid(pfn));
 
 		set_phys_to_machine(pfn, hetero_frame_list[i]);
+
 #ifdef HETERODEBUG
 	printk(KERN_ALERT "increase_reservation: pfn[%d]:%u "
 			"ready_lst_pgcnt %u hetero reserv pages %u\n", 
 			i, pfn, ready_lst_pgcnt, dbg_resv_hetropg_cnt);
 #endif
-
 
 #ifdef CONFIG_XEN_HAVE_PVMMU
 		/* Link back into the page tables if not highmem. */
@@ -345,11 +353,11 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 #endif
 		/* We will not relinquish the page back to the allocator. 
 		Because we mange the pages*/
-		//ClearPageReserved(page);
-		//init_page_count(page);
+		ClearPageReserved(page);
+		init_page_count(page);
 		//__free_page(page);
 		SetPageReserved(page);	
-
+		//printk(KERN_ALERT "adding to hetero_ready_lst_pgs \n");
 		list_add(&page->lru, &hetero_ready_lst_pgs);
 		ready_lst_pgcnt++;
 		dbg_resv_hetropg_cnt++;
@@ -357,11 +365,11 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		/*Fill it only if it is not NULL */
 		if(pagearr)
 			pagearr[i] = page;
-		
 	}
 	heteromem_stats.current_pages += rc;
-#ifdef HETERODEBUG
-	printk(KERN_DEBUG "Increase reservation %d "
+
+#ifndef HETERODEBUG
+	printk(KERN_ALERT "Increase reservation %d "
 			" ready_lst_pgcnt %u \n", rc, ready_lst_pgcnt);
 #endif
 	return BP_DONE;
@@ -548,15 +556,8 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 {
 		enum bp_state state = BP_DONE;
 		unsigned long  pfn, i;
-		struct page *page = NULL;
-		/*pages for which host, pfn-to-mfn table has been updated*/
-		struct list_head *hetero_skiplst;
-		unsigned int nr_pages;
 		int ret = 0;	
-	    int pfnconvfailed=0;
 		struct mm_struct *mm = NULL;
-		struct vm_area_struct *vma=NULL;
-		unsigned long addr =0;	
 
 		//printk("calling send_hotpage_skiplist\n");
 		if(!hetero_frame_list) {
@@ -582,116 +583,12 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
 			//printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
 			//goto skiplisterr;
 		}
-		//printk("get_hotpage_list: XENMEM_hetero_stop_hotpage_scan "
-		//				  "returns %u\n", ret);
-#if 0	
-		if(ret > 0) {
-		 for (i = 0; i < PAGE_SIZE; i++) {
-
-			 hetero_frame_listshadow[i]=hetero_frame_list[i];
-			 hetero_frame_list[i]=0;
-#if 0
-			 pfnconvfailed=0;
-	         pfn = mfn_to_pfn(hetero_frame_list[i]);
-			 page = pfn_to_page(pfn);
-			 if(!page) {
-				pfnconvfailed=1;
-				printk(KERN_ALERT "get_hotpage_list: page NULL \n");
-			 }else {
-				mm = current->mm;
-				if(mm) {
-        	     	addr = page_address(page);
-            	 	vma = find_vma(mm, addr);
-				}else {
-					printk(KERN_ALERT "get_hotpage_list: mm NULL \n");
-				}
-
-			 	if(vma) {
-					printk(KERN_ALERT "get_hotpage_list: vma found \n");
-			 	}else {
-					//printk(KERN_ALERT "get_hotpage_list: vma not found \n");
-			 	}			
-			 }
-		 	 ///printk(KERN_ALERT "get_hotpage_list: frame_list[%d]: "
-				//			   "%lu, pfn %u, pfn2page fail?%d \n",
-				//				i, hetero_frame_list[i], pfn, pfnconvfailed);
-		 	//printk(KERN_ALERT "get_hotpage_list: frame_list[%d]:, ret %d \n",
-			//				i, ret); 
-#endif
-		 }
-		}
-#endif
-
 		if(ret > MAX_MIGRATE)
 			ret = MAX_MIGRATE;
 
 		hotpagecnt = ret;	
-
 		*hotcnt = ret;
-
 		return hetero_frame_list;
-
-
-#if 0
-		hetero_skiplst = get_hetero_list(&nr_pages);
-
-		if(!nr_pages){
-			printk(KERN_ALERT "send_hotpage_skiplist: get_hetero_list returns 0 pages \n");
-			goto skiplisterr;
-		}else {
-			printk(KERN_ALERT "send_hotpage_skiplist: get_hetero_list returns %u pages \n", 
-								nr_pages);
-		}
-
-		for (i = 0; i < nr_pages; i++) {
-				hetero_frame_list[i] =0;
-		}	
-
-		if (list_empty(hetero_skiplst)){
-			printk(KERN_ALERT "send_hotpage_skiplist: nothing in the list \n");
-			state = BP_EAGAIN;
-			goto skiplisterr;
-		}
-
-		i=0;
-		while(i < nr_pages) {
-
-			page = list_entry(hetero_skiplst->next, struct page, nvlist);
-
-			if(!page) {
-				goto sendskiplist;
-			}
-
-			pfn = page_to_pfn(page);
-			hetero_frame_list[i] = pfn_to_mfn(pfn);
-			printk("Frame item i:%u mfn %x pfn %x \n", i, hetero_frame_list[i], pfn); 
-
-			/* used_lst_pgcnt--;*/
-			/*list_del(&page->nvlist);
-			i++;
-		}
-
-sendskiplist:
-		printk("number of reserved pages set for hotpage skip %u \n", nr_pages);
-		/*Setting the heteromem request flag used in hypervisor*/
-		reservation.mem_flags = reservation.mem_flags|XENMEMF_hetero_stop_hotpage_scan;
-		set_xen_guest_handle(reservation.extent_start, hetero_frame_list);
-		reservation.nr_extents = nr_pages;
-
-		//Test XENMEM_hetero_populate_physmap call	
-		ret = HYPERVISOR_memory_op(XENMEM_hetero_stop_hotpage_scan, &reservation);
-		if (ret <= 0){
-			printk(KERN_DEBUG "XENMEM_hetero_stop_hotpage_scan failed %d\n", ret);
-			goto skiplisterr;
-		}
-		return state;
-
-skiplisterr:
-		printk(KERN_ALERT "send_hotpage_skiplist: nothing in the list\n");
-		return BP_EAGAIN;	
-#endif
-
-
 }
 EXPORT_SYMBOL(get_hotpage_list);
 
@@ -753,8 +650,8 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 			if((idx == iter-1) && remind)
 				nr_pages = remind-3;
 
-			printk("number of reserved pages %lu pfn of first page %lu\n", 
-					nr_pages, page_to_pfn(page));
+			printk("number of reserved pages %lu \n", 
+					nr_pages); //, page_to_pfn(page));
 
 			for (i = 0; i < nr_pages; i++) {
 
@@ -774,7 +671,7 @@ static enum bp_state decrease_reservation(unsigned long nr_pages, gfp_t gfp)
 				pfn = page_to_pfn(page);
 				hetero_frame_list[i] = pfn_to_mfn(pfn);
 			    //printk("Frame item i:%u mfn %x pfn %x \n", i, hetero_frame_list[i], pfn); 
-				scrub_page(page);
+				//scrub_page(page);
 
 		#ifdef CONFIG_XEN_HAVE_PVMMU
 				if (xen_pv_domain() && !PageHighMem(page)) {
@@ -1032,6 +929,15 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 	unsigned long pfn;
 	
 
+#ifdef HETERO_JIT
+	page = getnvpage(NULL);	
+	if(!page) {
+		printk(KERN_DEBUG "HETERO_JIT: hetero_getnxt_page: list is empty: %u \n",
+				ready_lst_pgcnt);
+		return NULL;
+	}
+#else
+
 	if (list_empty(&hetero_ready_lst_pgs)){
 		printk(KERN_DEBUG "hetero_getnxt_page: list is empty: %u \n",
 				ready_lst_pgcnt);
@@ -1061,13 +967,14 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 
 	//if(used_lst_pgcnt == 2048)
 		//debug_heteroused_page();
-
-	
 #ifdef HETERODEBUG
 	printk(KERN_DEBUG "getting page from hetero ready list %lu "
 			"ready_lst_pgcnt %u reserv hetro pgs %u\n", 
 			page_to_pfn(page), ready_lst_pgcnt, dbg_resv_hetropg_cnt);
 #endif
+
+#endif
+
 	return page;
 }
 EXPORT_SYMBOL(hetero_getnxt_page);
