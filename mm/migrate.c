@@ -56,9 +56,9 @@
 //#define SELECTIVE_HETERO_SCAN
 #define PAGE_MIGRATED 2
 #define HETERO_PRINT_STATS 0
-#define HOT_MIN_MIG_LIMIT 64
+#define HOT_MIN_MIG_LIMIT 1
 //#define DEBUG_TIMER
-#define HETEROSTATS
+//#define HETEROSTATS
 #define _DISABLE_HETERO_CHECK
 
 #ifdef DEBUG_TIMER
@@ -1278,7 +1278,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 	if (!swapwrite)
 		current->flags |= PF_SWAPWRITE;
 
-	for(pass = 0; pass < 4 && retry; pass++) {
+	for(pass = 0; pass < 2 && retry; pass++) {
 		retry = 0;
 
 		list_for_each_entry_safe(page, page2, from, lru) {
@@ -2765,7 +2765,7 @@ static int check_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 
 #ifdef HETEROSTATS
 		 /*unique hot pages detected*/
-		 pageinhotlist++;
+		pageinhotlist++;
 		hetero_stats_addvmapg(vma, page);
 #endif
 		if(addtolist)
@@ -2934,6 +2934,7 @@ static int check_vma_exists(struct page *new, struct vm_area_struct *vma,
 		if(vma->vm_mm == current->mm){
 			//printk(KERN_ALERT "valid page \n");
 			migrate_page_add(new, private, flags);	
+			pageinhotlist++;
 			return 1;
 		}
 		else{
@@ -2981,9 +2982,6 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 	 if(!find_page_vma(page, private)){
 		return -1;
 	 } 	
-
-	 /*unique hot pages detected*/
-	 pageinhotlist++;
 
 	return 0;
 }
