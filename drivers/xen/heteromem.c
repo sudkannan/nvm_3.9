@@ -84,6 +84,7 @@ Also all code related to hotplug has been removed */
 #define MAX_HOT_MFN 262144
 #define MAX_MIGRATE 262144
 //#define HETERO_JIT
+#define HETEROMIGRATE 111
 
 /*
  * heteromem_process() state:
@@ -100,8 +101,8 @@ enum bp_state {
 };
 
 
+spinlock_t heterolock;
 static DEFINE_MUTEX(heteromem_mutex);
-
 struct heteromem_stats heteromem_stats;
 EXPORT_SYMBOL_GPL(heteromem_stats);
 
@@ -163,19 +164,23 @@ static void __heteromem_append(struct page *page)
 	if (PageHighMem(page)) {
 		list_add_tail(&page->lru, &heteromemed_pages);
 		heteromem_stats.heteromem_high++;
+		//printk("PageHighMem(page) __heteromem_append added \n");
 	} else {
 		list_add(&page->lru, &heteromemed_pages);
 		heteromem_stats.heteromem_low++;
+		//printk("PageLowMem(page) __heteromem_append added \n");
 	}
 }
 
-static void heteromem_append(struct page *page)
+void heteromem_append(struct page *page)
 {
 	__heteromem_append(page);
 	if (PageHighMem(page))
 		dec_totalhigh_pages();
 	totalram_pages--;
 }
+EXPORT_SYMBOL(heteromem_append);
+
 
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
 static struct page *heteromem_retrieve(bool prefer_highmem)
@@ -269,6 +274,32 @@ static enum bp_state reserve_additional_memory(long credit)
 	return BP_DONE;
 }
 
+int add_readylist_setup(struct page *page) {
+
+	//return 0;
+
+	if(!page){
+		return -1;
+	}
+	/* We will not relinquish the page back to the allocator. 
+	Because we mange the pages*/
+
+	spin_lock(&heterolock);
+
+	ClearPageReserved(page);
+	init_page_count(page);
+	//__free_page(page);
+	SetPageReserved(page);	
+	//printk(KERN_ALERT "adding to hetero_ready_lst_pgs \n");
+	list_add(&page->lru, &hetero_ready_lst_pgs);
+
+	spin_unlock(&heterolock);
+
+	return 0;
+}
+EXPORT_SYMBOL(add_readylist_setup);
+
+
 static enum bp_state increase_reservation(unsigned long nr_pages, struct page **pagearr)
 {
 	int rc;
@@ -314,6 +345,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 	reservation.nr_extents = nr_pages;
 
 	rc = HYPERVISOR_memory_op(XENMEM_hetero_populate_physmap, &reservation);
+	//rc = HYPERVISOR_memory_op(XENMEM_populate_physmap, &reservation);
 	if (rc <= 0){
 		printk(KERN_DEBUG "XENMEM_populate_physmap failed %d\n", rc);
 		return BP_EAGAIN;
@@ -351,6 +383,8 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 			BUG_ON(ret);
 		}
 #endif
+
+#if 1
 		/* We will not relinquish the page back to the allocator. 
 		Because we mange the pages*/
 		ClearPageReserved(page);
@@ -359,6 +393,9 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		SetPageReserved(page);	
 		//printk(KERN_ALERT "adding to hetero_ready_lst_pgs \n");
 		list_add(&page->lru, &hetero_ready_lst_pgs);
+#else
+		add_readylist_setup(page);
+#endif
 		ready_lst_pgcnt++;
 		dbg_resv_hetropg_cnt++;
 
@@ -423,7 +460,7 @@ struct page* get_from_usedpage_list() {
 		first_time = 1; 
 	 }*/	
 	 if (list_empty(&hetero_used_lst_pgs)){
-    	 printk(KERN_DEBUG "hetero_getused_page: list is empty\n");
+    	 //printk(KERN_DEBUG "hetero_getused_page: list is empty\n");
 	     return NULL;
 	 }
 	 page = list_entry(hetero_used_lst_pgs.prev, struct page, lru);
@@ -927,20 +964,12 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 {
 	struct page *page;
 	unsigned long pfn;
-	
 
-#ifdef HETERO_JIT
-	page = getnvpage(NULL);	
-	if(!page) {
-		printk(KERN_DEBUG "HETERO_JIT: hetero_getnxt_page: list is empty: %u \n",
-				ready_lst_pgcnt);
-		return NULL;
-	}
-#else
+	spin_lock(&heterolock);
 
 	if (list_empty(&hetero_ready_lst_pgs)){
-		printk(KERN_DEBUG "hetero_getnxt_page: list is empty: %u \n",
-				ready_lst_pgcnt);
+		//printk(KERN_DEBUG "hetero_getnxt_page: list is empty: %u \n",
+		//		ready_lst_pgcnt);
 		return NULL;
 	}
 	if(!prefer_highmem)
@@ -949,21 +978,33 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 		page = list_entry(hetero_ready_lst_pgs.prev, struct page, lru);
 
     if(!page) {
-		printk(KERN_DEBUG "hetero_getnxt_page: list is empty \n");
+		//printk(KERN_DEBUG "hetero_getnxt_page: list is empty \n");
 		return NULL;
 	}
 	list_del(&page->lru);
+
+	//if(page->nvdirty == HETEROMIGRATE)
+	//	printk("hetero_getnxt_page: using HETEROMIGRATED page\n");
 
 	if(ready_lst_pgcnt)
 		ready_lst_pgcnt--;
 
 	pfn= page_to_pfn(page);
-	//printk("hetero_getnxt_page: Frame mfn %x pfn %x \n", pfn_to_mfn(pfn), page_to_pfn(page)); 
 
+#ifndef HETERO_JIT	
 	//add to used list of pages
 	list_add(&page->lru, &hetero_used_lst_pgs);
 	init_page_count(page);
+#endif	
 	used_lst_pgcnt++;
+
+	spin_unlock(&heterolock);	
+
+	if(used_lst_pgcnt % 10000 == 0)
+	printk("hetero_getnxt_page: Frame mfn %x pfn %x " 
+			"used pagecount %u \n", pfn_to_mfn(pfn), 
+			page_to_pfn(page), used_lst_pgcnt); 
+
 
 	//if(used_lst_pgcnt == 2048)
 		//debug_heteroused_page();
@@ -972,9 +1013,6 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 			"ready_lst_pgcnt %u reserv hetro pgs %u\n", 
 			page_to_pfn(page), ready_lst_pgcnt, dbg_resv_hetropg_cnt);
 #endif
-
-#endif
-
 	return page;
 }
 EXPORT_SYMBOL(hetero_getnxt_page);

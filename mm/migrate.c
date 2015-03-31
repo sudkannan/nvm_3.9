@@ -54,12 +54,24 @@
 #define ENABLE_HETERO
 #define HETERO_SKIPLIST_LEN 1024*512
 //#define SELECTIVE_HETERO_SCAN
-#define PAGE_MIGRATED 2
+#define PAGE_MIGRATED 111
 #define HETERO_PRINT_STATS 0
 #define HOT_MIN_MIG_LIMIT 1
 //#define DEBUG_TIMER
 //#define HETEROSTATS
 #define _DISABLE_HETERO_CHECK
+#define HETEROFAIL -1
+
+
+unsigned int g_PG_swapbacked;
+unsigned int g_PG_lru;
+unsigned int g_PG_active;
+unsigned int g_PG_inactive;
+unsigned int g_PG_dirty;
+unsigned int g_PG_private;
+unsigned int g_PG_writeback;
+unsigned int g_PG_reserved;
+
 
 #ifdef DEBUG_TIMER
 unsigned long tot_mig_time;
@@ -76,7 +88,6 @@ static unsigned int num_migrated;
 /*Xen reported hot pages*/
 static unsigned int stat_xen_hot_pages;
 static unsigned int stat_tot_proc_pages;
-
 #endif
 
 /* Internal flags */
@@ -96,19 +107,16 @@ void init_hetero_list_fn();
 static unsigned long *skiplist_arr;
 
 #endif
-
 //#define HETERODEBUG
 unsigned int nr_migrate_success;
 unsigned int nr_migrate_attempted;
 unsigned int nr_page_freed;
 
 unsigned int pg_debug_count;
-
 unsigned int pg_busy;
 unsigned int pg_rtnode_err;
 unsigned int pg_notexist;
 unsigned int pg_nopte;
-
 
 unsigned int beforemigrate_dbg_count;
 unsigned int nonrsrvpg_dbg_count;
@@ -122,6 +130,9 @@ unsigned int pageinhotlist;
 unsigned int dup_hot_page;
 unsigned long debug_pfn[4096];
 unsigned long debug_pfn_cnt[4096];
+
+spinlock_t *migrate_lock;
+
 
 #ifdef HETEROSTATS
 int do_complete_page_walk();
@@ -949,10 +960,13 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 {
 	int rc = 0;
 	int *result = NULL;
-	struct page *newpage = get_new_page(page, private, &result);
+	struct page *newpage;
 
+
+	newpage = get_new_page(page, private, &result);
 	if (!newpage)
 		return -ENOMEM;
+
 
 	if (page_count(page) == 1) {
 		/* page was freed from under us. So we are done. */
@@ -963,6 +977,7 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	if (unlikely(PageTransHuge(page)))
 		if (unlikely(split_huge_page(page)))
 			goto out;
+
 
 	rc = __unmap_and_move(page, newpage, force, mode);
 
@@ -997,8 +1012,7 @@ out:
 
 	//if (PageReserved(newpage))
 	//	printk(KERN_ALERT "Releasing newpage is reserved \n");
-
-
+	
 	/*
 	 * Move the new page to the LRU. If migration was not successful
 	 * then this will free the page.
@@ -1007,6 +1021,7 @@ out:
 	//	ClearPageReserved(newpage);
 
 	putback_lru_page(newpage);
+	newpage->nvdirty = PAGE_MIGRATED;
 
 	if (result) {
 		if (rc)
@@ -1278,7 +1293,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 	if (!swapwrite)
 		current->flags |= PF_SWAPWRITE;
 
-	for(pass = 0; pass < 2 && retry; pass++) {
+	for(pass = 0; pass < 1 && retry; pass++) {
 		retry = 0;
 
 		list_for_each_entry_safe(page, page2, from, lru) {
@@ -1315,6 +1330,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 #endif
 /*NVM CHANGES*/
 				//list_del(&page->lru);
+				//page->nvdirty=PAGE_MIGRATED;
 				nr_succeeded++;
 				nr_migrate_success++;
 				inc_zone_page_state(page, NUMA_MIGRATED_FROM);
@@ -2973,11 +2989,12 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 	 //print_all_conversion(vma, page);
 	 if(page->nvdirty == PAGE_MIGRATED) {
 		dup_hot_page++;  
-		//return -1;
+		return -1;
 	  }	
 
-	 /*page has been already added to the dirty list*/
-	 page->nvdirty=PAGE_MIGRATED;
+	 ///*page has been already added to the dirty list*/
+	 //Set only if page is migrated in my_migrate_pages.
+	 //page->nvdirty=PAGE_MIGRATED;
 
 	 if(!find_page_vma(page, private)){
 		return -1;
@@ -3037,6 +3054,90 @@ long simulation_time(struct timespec start, struct timespec end)
 
 }
 #endif
+
+int hetero_page_filter(struct page *page){
+
+	if(test_bit(PG_swapbacked, &page->flags)) //&& test_bit(PG_lru,&page->flags))
+	//if(test_bit(PG_active, &page->flags) && !test_bit(PG_dirty,&page->flags) 
+	 //	&& !test_bit(PG_reserved,&page->flags) && !test_bit(PG_lru,&page->flags))
+	//if(test_bit(PG_active,&page->flags))
+	{
+
+#if 0
+	  g_PG_swapbacked++;	
+
+	  if(test_bit(PG_lru,&page->flags))
+    	  g_PG_lru++;
+
+	  if(test_bit(PG_active,&page->flags))
+    	  g_PG_active++;
+
+	  if(!test_bit(PG_active,&page->flags))
+    	  g_PG_inactive++;
+
+	  if(test_bit(PG_dirty,&page->flags))
+    	  g_PG_dirty++;
+
+	  if(test_bit(PG_private,&page->flags))
+    	  g_PG_private++;
+
+	  if(test_bit(PG_writeback,&page->flags))
+    	  g_PG_writeback++;
+
+	  if(test_bit(PG_reserved,&page->flags))
+    	 g_PG_reserved++;
+
+	  printk("g_PG_swapbacked %u, "
+		 "g_PG_lru %u, "
+		 "g_PG_active %u, "
+		 "g_PG_inactive %u, "
+		 "g_PG_dirty %u, "
+		 "g_PG_private %u, "
+		 "g_PG_writeback %u, "
+		 "g_PG_reserved %u \n", 
+		 g_PG_swapbacked,
+		 g_PG_lru,
+		 g_PG_active,
+		 g_PG_inactive,
+		 g_PG_dirty,
+		 g_PG_private,
+		 g_PG_writeback,
+		 g_PG_reserved);
+#endif
+		return 0;
+	}
+	else {
+		return HETEROFAIL;
+	}
+
+#if 0
+	if(test_bit(PG_reserved, &page->flags))
+		return HETEROFAIL;
+
+	if(test_bit(PG_unevictable, &page->flags))
+		return HETEROFAIL;
+
+	if(test_bit(PG_writeback, &page->flags))
+		return HETEROFAIL;
+
+	if(test_bit(PG_mappedtodisk, &page->flags))
+		return HETEROFAIL;
+
+	if(test_bit(PG_reclaim, &page->flags))
+		return HETEROFAIL;
+
+	if(!test_bit(PG_active,&page->flags))
+		return HETEROFAIL;	
+
+	if(!test_bit(PG_swapcache,&page->flags))
+		return HETEROFAIL;	
+
+	return 0;	
+
+	if(test_bit(PG_swapbacked, &page->flags))
+			return HETEROFAIL;
+#endif
+}
 
 int hetero_filter(struct vm_area_struct * vmatmp){
 
@@ -3169,6 +3270,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 
     	if(!page) continue;
 
+		/*Filter certain kind of pages*/	
+		//if(hetero_page_filter(page) == HETEROFAIL)
+		//	continue;
+
 		flags = flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK;
 		migrate_hot_pages(page, &pagelist,flags);
 	}
@@ -3189,6 +3294,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	   /*printk(KERN_ALERT "calling migration \n");*/
        //err = my_migrate_pages(&pagelist, new_page_node, dest,
          //                      MIGRATE_SYNC, MR_SYSCALL);
+		spin_lock(&migrate_lock);
 	  	err = my_migrate_pages(&pagelist, new_page_node, dest,
         	                      MIGRATE_SYNC, MR_SYSCALL);
         if (err) {
@@ -3196,6 +3302,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	    }else {
 
   	  	}
+		spin_unlock(&migrate_lock);
 	}
 
 #ifdef DEBUG_TIMER
@@ -3214,7 +3321,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 		//do_complete_page_walk();
     }*/
 
-	//if( nr_migrate_success % 2 == 0)
+	if( nr_migrate_success % 10 == 0)
 	printk(KERN_ALERT "sys_move_inactpages: %u out of %u, "
               	"pageinhotlist %u, dup_hot_page %u "
 			 	"Total Proc Page %u, num_unmap_pages %u, "

@@ -28,4 +28,5 @@ echo Now edit menu.lst or run /sbin/update-grub
 
 grep -r "warning:" compile.out &> warnings.out
 grep -r "error:" compile.out &> errors.out
+#./copy.sh
 #sudo reboot

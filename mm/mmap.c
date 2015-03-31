@@ -1546,6 +1546,8 @@ munmap_back:
 	vma->vm_pgoff = pgoff;
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
 
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
 	error = -EINVAL;	/* when rejecting VM_GROWSDOWN|VM_GROWSUP */
 
 	if (file) {
@@ -2703,7 +2705,6 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 		vm_unacct_memory(len >> PAGE_SHIFT);
 		return -ENOMEM;
 	}
-
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
 	vma->vm_mm = mm;
 	vma->vm_start = addr;
@@ -2712,6 +2713,9 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	vma->vm_flags = flags;
 	vma->vm_page_prot = vm_get_page_prot(flags);
 	vma_link(mm, vma, prev, rb_link, rb_parent);
+
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
 out:
 	perf_event_mmap(vma);
 	mm->total_vm += len >> PAGE_SHIFT;

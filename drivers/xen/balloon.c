@@ -357,6 +357,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages)
 
 	set_xen_guest_handle(reservation.extent_start, frame_list);
 	reservation.nr_extents = nr_pages;
+	printk(KERN_ALERT "calling XENMEM_populate_physmap in balloon.c\n");
 	rc = HYPERVISOR_memory_op(XENMEM_populate_physmap, &reservation);
 	if (rc <= 0)
 		return BP_EAGAIN;

@@ -28,7 +28,8 @@ void heteromem_set_new_target(unsigned long target);
 int alloc_xenheteromemed_pages(int nr_pages, struct page **pages,
 		bool highmem, int delpage);
 void free_xenheteromemed_pages(int nr_pages, struct page **pages);
-
+void heteromem_append(struct page *page);
+int add_readylist_setup(struct page *page);
 int heteromem_init(int idx, unsigned long start, unsigned long size);
 
 /*HeteroMem Get next page*/
