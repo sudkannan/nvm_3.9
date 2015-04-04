@@ -465,6 +465,20 @@ HYPERVISOR_tmem_op(
 	return _hypercall1(int, tmem_op, op);
 }
 
+static inline int
+HYPERVISOR_hsm_get_mfn(unsigned long *mfn)
+{
+	   return _hypercall1(int, hsm_get_page, mfn);
+}
+
+static inline int
+HYPERVISOR_hsm_free_mfn(unsigned long mfn)
+{
+	   return _hypercall1(int, hsm_free_page, mfn);
+}
+
+
+
 static inline void
 MULTI_fpu_taskswitch(struct multicall_entry *mcl, int set)
 {

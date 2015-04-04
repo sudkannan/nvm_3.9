@@ -43,6 +43,7 @@
 #include <xen/balloon.h>
 #include <xen/heteromem.h>
 #include <asm/xen/page.h>
+#include <xen/amaro.h>
 #include <asm/page.h>
 #include <asm/io.h>
 
@@ -3241,7 +3242,8 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 #endif	
 
 #if 1
-	hot_frame_list = get_hotpage_list(&hotpgcnt);
+	//hot_frame_list = get_hotpage_list(&hotpgcnt);
+	hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
  	if(!hotpgcnt || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
 	}
