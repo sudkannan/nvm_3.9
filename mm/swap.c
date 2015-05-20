@@ -66,6 +66,10 @@ static void __page_cache_release(struct page *page)
 
 static void __put_single_page(struct page *page)
 {
+	if(test_bit(PG_hetero, &page->flags)) {
+		//return;
+		//printk(KERN_ALERT "__put_single_page page has hetero flag \n");
+	}
 	__page_cache_release(page);
 	free_hot_cold_page(page, 0);
 }

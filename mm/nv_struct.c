@@ -39,8 +39,6 @@
 #include <xen/balloon.h>
 #include <xen/heteromem.h>
 
-
-#define HETEROMEM
 //#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG

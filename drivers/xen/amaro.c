@@ -8,7 +8,7 @@
 
 #include <xen/amaro.h>
 
-#define MAX_HOT_MFN 262144
+#define MAX_HOT_MFN 256000
 #define NUM_SHARED_PAGES 256
 
 void *vaddrs[NUM_SHARED_PAGES];
@@ -33,7 +33,7 @@ asmlinkage long sys_hsm_read(unsigned int start)
     start = start % max_frames;
     fidx = 0;
   
-    printk("start=%u, frames_ppage=%u\n", start, frames_ppage);
+    //printk("start=%u, frames_ppage=%u\n", start, frames_ppage);
 
     for(pidx = (start * NUM_SHARED_PAGES) / max_frames; pidx < NUM_SHARED_PAGES; ++pidx)
     {
@@ -47,12 +47,12 @@ asmlinkage long sys_hsm_read(unsigned int start)
 
             if (f->mfn == 0)
             {
-                printk("pidx=%u fidx=%ld mfn=0 break\n", pidx, fidx);
+                //printk("pidx=%u fidx=%ld mfn=0 break\n", pidx, fidx);
                 return fidx + (frames_ppage * pidx);
             }
             else
             {
-                printk("pidx=%u fidx=%ld mfn=%u\n", pidx, fidx, f->mfn);
+                //printk("pidx=%u fidx=%ld mfn=%u\n", pidx, fidx, f->mfn);
             }
         }
     }
@@ -145,12 +145,15 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
             //if (unlikely(pidx == 0 && fidx == 0))
               //  continue;
 
+			if(MAX_HOT_MFN < *hotcnt)
+				return frame_list;
+
             offset = fidx * sizeof(struct frame);
             f = (void *)(((unsigned long)curr_base_vaddr) + offset);
 
             if (f->mfn == 0) {
                 //*hotcnt = pidx * frames_ppage + fidx;
-                //printk("hotcnt = %u fidx=%u pidx=%u "
+               	//printk("hotcnt = %u fidx=%u pidx=%u "
 				//		"frames_ppage=%u\n", *hotcnt, fidx, pidx, frames_ppage);
                 return frame_list;
             }

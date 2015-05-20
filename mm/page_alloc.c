@@ -69,8 +69,7 @@
 #ifdef CONFIG_NVM_1
 static unsigned int nvm_freed_pgcnt;
 #endif
-#define HETEROMEM
-#define PAGE_MIGRATED 111
+
 static int prep_new_page(struct page *page, int order, gfp_t gfp_flags);
 
 #ifdef CONFIG_USE_PERCPU_NUMA_NODE_ID
@@ -628,6 +627,7 @@ static inline int free_pages_check(struct page *page)
 		(mem_cgroup_bad_page_check(page)))) {
 
 		if(test_bit(PG_hetero, &page->flags)) {
+			//printk(KERN_ALERT "freeing PG_hetero flag \n");
 			//ClearPageReserved(page);
 			//goto continue_free;
 			return 1;
@@ -745,16 +745,22 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 	for (i = 0; i < (1 << order); i++)
 		bad += free_pages_check(page + i);
 
-	if (bad){
 #ifdef HETEROMEM
 		if(page->nvdirty == PAGE_MIGRATED){
 			//printk("page->nvdirty bag page \n");
 			//clear_page(page);
 			//prep_new_page(page, 1 << order, 0);
 			page->nvdirty = PAGE_MIGRATED;
+		    //printk("page->nvdirty == PAGE_MIGRATED adding to ready list \n");
 			add_readylist_setup(page);
 		}
+
+		//if(test_bit(PG_hetero, &page->flags)) {
+		    //printk(KERN_ALERT "free_pages_prepare: freeing PG_hetero flag \n");
+		//}
 #endif
+
+	if (bad){
 		return false;
 	}
 
@@ -895,8 +901,11 @@ static inline int check_new_page(struct page *page)
 		(page->flags & PAGE_FLAGS_CHECK_AT_PREP) |
 		(mem_cgroup_bad_page_check(page)))) {
 		//printk(KERN_ALERT "Bad page check_new_page \n");
-		if(page->nvdirty == PAGE_MIGRATED)
-			return 0;
+		
+		
+		//if(page->nvdirty == PAGE_MIGRATED)
+		//	return 0;
+
 		bad_page(page);
 		return 1;
 	}
@@ -1388,32 +1397,22 @@ void free_hot_cold_page(struct page *page, int cold)
     }
 #endif
 
+	/*if(test_bit(PG_hetero, &page->flags)) {
+	    printk(KERN_ALERT "free_pages_prepare: freeing PG_hetero flag \n");
+	}
+
+	if(test_bit(PG_nvram, &page->flags)) {
+	    printk(KERN_ALERT "free_pages_prepare: freeing PG_nvram flag \n");
+	}
+	if(page->nvdirty == PAGE_MIGRATED){
+		printk(KERN_ALERT "free_pages_prepare: page->nvdirty == PAGE_MIGRATED \n");
+	}*/
+
 skip:
 
-
-/*#ifdef HETEROMEM
-	if(page->nvdirty == PAGE_MIGRATED) {	
-		//printk(KERN_ALERT "page->nvdirty before " 
-		//			"free_pages_prepare \n");
-		hetroflg = page->nvdirty;
-	}else {
-		hetroflg = 0;
-	}
-#endif*/
-
 	if (!free_pages_prepare(page, 0)) {
-		//if(PAGE_MIGRATED == hetroflg)
-		//	printk(KERN_ALERT "free_pages_prepare returning\n");
 		return;
 	}
-
-/*#ifdef HETEROMEM
-	if(PAGE_MIGRATED == hetroflg){
-		printk(KERN_ALERT "after page->nvdirty " 
-					"free_pages_prepare \n");
-		page->nvdirty = hetroflg;
-	}
-#endif*/
 
 	migratetype = get_pageblock_migratetype(page);
 	set_freepage_migratetype(page, migratetype);
@@ -1450,17 +1449,6 @@ skip:
 		free_pcppages_bulk(zone, pcp->batch, pcp);
 		pcp->count -= pcp->batch;
 	}
-
-/*
-#ifdef HETEROMEM
-	if(page->nvdirty == PAGE_MIGRATED) {
-		printk(KERN_ALERT "page->nvdirty after adding to pcp->lists %u\n",
-							migratetype);
-		//add_readylist_setup(page);
-	}
-#endif
-*/
-
 
 #ifdef CONFIG_NVM_1
 	if(test_bit(PG_nvram, &page->flags)) {

@@ -3276,6 +3276,14 @@ munmap_back:
 		    vma->vm_start, vma->vm_end, len, vma->vma_id);
 #endif
 
+
+#ifdef HETEROMEM
+     if(current->mm){
+         current->mm->def_flags = VM_HETERO | current->mm->def_flags;
+		 current->heteroflag = PF_HETEROMEM;
+         //printk(KERN_ALERT "Setting the current->mm->def_flags \n");
+     }
+#endif
 	error = -EINVAL;	/* when rejecting VM_GROWSDOWN|VM_GROWSUP */
 
 	if(a)
@@ -3746,6 +3754,14 @@ asmlinkage long sys_nv_mmap_pgoff( unsigned long addr, unsigned long len,
 	 /*if the pages are supposed to be non persistent*/
      if(a.noPersist)
 		goto out;
+
+#ifdef HETEROMEM
+	 if(current->mm){
+		 current->mm->def_flags = VM_HETERO | current->mm->def_flags;
+		 printk(KERN_ALERT "Setting the current->mm->def_flags \n");
+	 }
+#endif
+
 
 	/*after all allocation has been done
 	update the NVRAM allocation tree for

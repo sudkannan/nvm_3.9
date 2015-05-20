@@ -1929,6 +1929,15 @@ static inline struct page *__skb_alloc_pages(gfp_t gfp_mask,
 	if (!(gfp_mask & __GFP_NOMEMALLOC))
 		gfp_mask |= __GFP_MEMALLOC;
 
+#ifdef HETEROMEM
+	//if(current && current->mm && current->mm->def_flags && VM_HETERO){
+		printk(KERN_ALERT "__skb_alloc_pages: "
+				"alloc_pages_node from hetero \n");
+		//page = getnvpage(NULL);
+	//}
+	//if(!page)
+#endif
+
 	page = alloc_pages_node(NUMA_NO_NODE, gfp_mask, order);
 	if (skb && page && page->pfmemalloc)
 		skb->pfmemalloc = true;

@@ -182,6 +182,16 @@ __do_page_cache_readahead(struct address_space *mapping, struct file *filp,
 		if (page)
 			continue;
 
+//#ifdef HETEROMEM
+#if 0
+		if(current && current->mm && current->mm->def_flags && VM_HETERO){
+			page = getnvpage(NULL);
+			//if(page){
+				//printk(KERN_ALERT "allocating from VM_HETERO getnvpage\n");
+			//}
+		}
+		if(!page)
+#endif
 		page = page_cache_alloc_readahead(mapping);
 		if (!page)
 			break;

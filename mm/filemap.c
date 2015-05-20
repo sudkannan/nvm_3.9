@@ -502,11 +502,30 @@ struct page *__page_cache_alloc(gfp_t gfp)
 		do {
 			cpuset_mems_cookie = get_mems_allowed();
 			n = cpuset_mem_spread_node();
+#if 0			
+//#ifdef HETEROMEM
+			if(current && current->mm && current->mm->def_flags && VM_HETERO){
+				printk(KERN_ALERT "__page_cache_alloc: "
+							"alloc_pages_exact_node from hetero \n");
+				page = getnvpage(NULL);
+			}
+			if(!page)
+#endif
 			page = alloc_pages_exact_node(n, gfp, 0);
-		} while (!put_mems_allowed(cpuset_mems_cookie) && !page);
 
+		} while (!put_mems_allowed(cpuset_mems_cookie) && !page);
 		return page;
 	}
+
+#if 0
+//#ifdef HETEROMEM
+		if(current && current->mm && current->mm->def_flags && VM_HETERO){
+			//printk(KERN_ALERT "__page_cache_alloc: "
+			//				"before alloc_pages from hetero \n");
+			page = getnvpage(NULL);
+			if(page) return page;
+		}	
+#endif
 	return alloc_pages(gfp, 0);
 }
 EXPORT_SYMBOL(__page_cache_alloc);
@@ -1269,6 +1288,13 @@ no_cached_page:
 		 * Ok, it wasn't cached, so we need to create a new
 		 * page..
 		 */
+//#ifdef HETEROMEM
+#if 0
+        if(current && current->mm && current->mm->def_flags && VM_HETERO){
+            page = getnvpage(NULL);
+        }
+        if(!page)
+#endif	
 		page = page_cache_alloc_cold(mapping);
 		if (!page) {
 			desc->error = -ENOMEM;
@@ -1489,6 +1515,13 @@ static int page_cache_read(struct file *file, pgoff_t offset)
 	int ret;
 
 	do {
+//#ifdef HETEROMEM
+#if 0
+        if(current && current->mm &&  current->mm->def_flags && VM_HETERO){
+            page = getnvpage(NULL);
+        }
+        if(!page)
+#endif	
 		page = page_cache_alloc_cold(mapping);
 		if (!page)
 			return -ENOMEM;
@@ -1599,6 +1632,12 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	pgoff_t size;
 	int ret = 0;
 
+#ifdef HETEROMEM_DISABLE
+	//if(current && current->mm && current->mm->def_flags && VM_HETERO){
+	//	printk(KERN_ALERT "filemap_fault entering \n");
+	//}	
+#endif
+
 	size = (i_size_read(inode) + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 	if (offset >= size)
 		return VM_FAULT_SIGBUS;
@@ -1608,12 +1647,24 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	 */
 	page = find_get_page(mapping, offset);
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
+
+#ifdef HETEROMEM_DISABLE
+	    //if(current && current->mm && current->mm->def_flags && VM_HETERO){
+    	  //  printk(KERN_ALERT "found find_get_page cache \n");
+    	//}
+#endif
 		/*
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
 		 */
 		do_async_mmap_readahead(vma, ra, file, page, offset);
 	} else if (!page) {
+
+#ifdef HETEROMEM_DISABLE
+	    if(current && current->mm && current->mm->def_flags && VM_HETERO){
+    	    printk(KERN_ALERT "not found find_get_page cache \n");
+    	}
+#endif
 		/* No page in the page cache at all */
 		do_sync_mmap_readahead(vma, ra, file, offset);
 		count_vm_event(PGMAJFAULT);
@@ -1660,6 +1711,13 @@ retry_find:
 	return ret | VM_FAULT_LOCKED;
 
 no_cached_page:
+
+#ifdef HETEROMEM_DISABLE
+	    if(current && current->mm && current->mm->def_flags && VM_HETERO){
+    	    printk(KERN_ALERT "In no_cached_page: \n");
+    	}
+#endif
+
 	/*
 	 * We're only likely to ever get here if MADV_RANDOM is in
 	 * effect.

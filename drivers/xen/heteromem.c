@@ -277,22 +277,19 @@ static enum bp_state reserve_additional_memory(long credit)
 int add_readylist_setup(struct page *page) {
 
 	//return 0;
-
 	if(!page){
 		return -1;
 	}
+
 	/* We will not relinquish the page back to the allocator. 
 	Because we mange the pages*/
-
 	spin_lock(&heterolock);
-
 	ClearPageReserved(page);
 	init_page_count(page);
 	//__free_page(page);
 	SetPageReserved(page);	
 	//printk(KERN_ALERT "adding to hetero_ready_lst_pgs \n");
-	list_add(&page->lru, &hetero_ready_lst_pgs);
-
+	list_add(&page->lru, &hetero_used_lst_pgs);
 	spin_unlock(&heterolock);
 
 	return 0;
@@ -319,6 +316,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 
 	 if (!g_hetero_ready ) {
     	 INIT_LIST_HEAD(&hetero_ready_lst_pgs);
+		 INIT_LIST_HEAD(&hetero_used_lst_pgs);
 	     g_hetero_ready = 1;
 	 }
 
@@ -455,10 +453,6 @@ struct page* get_from_usedpage_list() {
 
 	struct page *page = NULL;
 
-	/*if(!first_time) {
-		glbnext = &hetero_used_lst_pgs;
-		first_time = 1; 
-	 }*/	
 	 if (list_empty(&hetero_used_lst_pgs)){
     	 //printk(KERN_DEBUG "hetero_getused_page: list is empty\n");
 	     return NULL;
@@ -468,7 +462,6 @@ struct page* get_from_usedpage_list() {
     	printk(KERN_DEBUG "hetero_getused_page: list is empty \n");
 	    return NULL;
 	  }
-	  //glbnext = glbnext->next;
 	  return page; 	
 }
 
@@ -956,9 +949,6 @@ void debug_heteroused_page(void)
 
 }
 
-
-
-
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
 struct page *hetero_getnxt_page(bool prefer_highmem)
 {
@@ -968,24 +958,29 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 	spin_lock(&heterolock);
 
 	if (list_empty(&hetero_ready_lst_pgs)){
-		//printk(KERN_DEBUG "hetero_getnxt_page: list is empty: %u \n",
-		//		ready_lst_pgcnt);
+#if 1
+		page = get_from_usedpage_list();
+		if(page){
+			goto hetero_nxt_page;
+		}
+#endif
+		spin_unlock(&heterolock);
 		return NULL;
 	}
+
 	if(!prefer_highmem)
 		page = list_entry(hetero_ready_lst_pgs.next, struct page, lru);
 	else
 		page = list_entry(hetero_ready_lst_pgs.prev, struct page, lru);
 
     if(!page) {
-		//printk(KERN_DEBUG "hetero_getnxt_page: list is empty \n");
+		spin_unlock(&heterolock);
 		return NULL;
 	}
+hetero_nxt_page:
 	list_del(&page->lru);
-
 	//if(page->nvdirty == HETEROMIGRATE)
 	//	printk("hetero_getnxt_page: using HETEROMIGRATED page\n");
-
 	if(ready_lst_pgcnt)
 		ready_lst_pgcnt--;
 
@@ -993,7 +988,7 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 
 #ifndef HETERO_JIT	
 	//add to used list of pages
-	list_add(&page->lru, &hetero_used_lst_pgs);
+	//list_add(&page->lru, &hetero_used_lst_pgs);
 	init_page_count(page);
 #endif	
 	used_lst_pgcnt++;
@@ -1005,9 +1000,6 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 			"used pagecount %u \n", pfn_to_mfn(pfn), 
 			page_to_pfn(page), used_lst_pgcnt); 
 
-
-	//if(used_lst_pgcnt == 2048)
-		//debug_heteroused_page();
 #ifdef HETERODEBUG
 	printk(KERN_DEBUG "getting page from hetero ready list %lu "
 			"ready_lst_pgcnt %u reserv hetro pgs %u\n", 

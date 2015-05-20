@@ -80,8 +80,6 @@
 #include <xen/features.h>
 #include <xen/page.h>
 
-
-#define HETEROMEM
 //#define HETEROMEM_GREEDY_ALLOCATE /*Allocate from hetero pages*/
 #define SETNVMPAGEBIT 
 #define _NV_CODE_DEBUG
@@ -1263,12 +1261,6 @@ again:
 			}	
 			force_flush = !__tlb_remove_page(tlb, page);
 
-#ifdef HETEROMEM
-			if(page->nvdirty == 111) {
-				//add_readylist_setup(page);	
-				//printk("freeing heteromem page->nvdirty %d and appending \n", page->nvdirty);
-			}
-#endif
 			//if(test_bit(PG_nvram, &page->flags))
 			//printk("NVM page with page count %d \n", page_mapcount(page));
 
@@ -1283,16 +1275,9 @@ again:
 		 * if details->nonlinear_vma, we leave file entries.
 		 */
 		if (unlikely(details)) {
-
-			//if(page->nvdirty == 111)
-			//	printk("unlikely(details) heteromem page->nvdirty %d \n", page->nvdirty);
-
 			continue;
 		}	
 		if (pte_file(ptent)) {
-
-			//if(page->nvdirty == 111)
-				//printk("pte_file(ptent) heteromem page->nvdirty %d \n", page->nvdirty);
 
 			if (unlikely(!(vma->vm_flags & VM_NONLINEAR)))
 				print_bad_pte(vma, addr, ptent, NULL);
@@ -1302,17 +1287,9 @@ again:
 			if (!non_swap_entry(entry)) {
 				rss[MM_SWAPENTS]--;
 
-			//if(page->nvdirty == 111)
-				//printk("!non_swap_entry %d \n", page->nvdirty);
-
 			}
 			else if (is_migration_entry(entry)) {
 				struct page *page;
-
-#ifdef HETEROMEM
-				if(page->nvdirty == 111)
-					printk("is_migration_entry %d \n", page->nvdirty);
-#endif
 
 				page = migration_entry_to_page(entry);
 
@@ -3593,6 +3570,12 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	int ret;
 	int page_mkwrite = 0;
 
+#ifdef HETEROMEM
+		//if(current->mm->def_flags && VM_HETERO){
+		//	printk(KERN_ALERT "mm->def_flags VM_HETERO \n");
+		//}	
+#endif
+
 	/*
 	 * If we do COW later, allocate page befor taking lock_page()
 	 * on the file cache page. This will reduce lock holding time.
@@ -3602,6 +3585,14 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 		if (unlikely(anon_vma_prepare(vma)))
 			return VM_FAULT_OOM;
 
+#if 0
+//#ifdef HETEROMEM
+		if(current && current->mm && current->mm->def_flags && VM_HETERO){
+			printk(KERN_ALERT "allocating COW page \n");
+			cow_page = nv_alloc_page_numa(vma);
+		}	
+		if(!cow_page)
+#endif
 		cow_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
 		if (!cow_page)
 			return VM_FAULT_OOM;
@@ -4782,6 +4773,19 @@ write_fault:
 
         page = NULL;
 
+#ifdef HETEROMEM_1
+		page = hetero_getnxt_page(false);
+		if(!page){
+			page = alloc_zeroed_user_highpage_movable(vma, address);
+			if(!page) {	
+				goto oom;
+			}
+		}else {
+			set_bit(PG_hetero, &page->flags);
+			page->nvdirty = PAGE_MIGRATED;	
+			page_reuse=1;
+		}
+#else
 		if(!vma->noPersist) {
 			//printk(KERN_ALERT "using persist vma \n");	
 		    page = get_nv_faultpg(vma, address, &err);
@@ -4809,12 +4813,17 @@ write_fault:
 					goto oom;
 				}
 			}else {
+#ifndef HETEROMEM		
 				atomic_inc(&page->_count);
+#endif
 			}
 #ifndef NV_JIT_ALLOC	
-			set_bit(PG_nvram, &page->flags);
+#ifndef HETEROMEM			
+		set_bit(PG_nvram, &page->flags);
+#endif
 #endif
 		}
+#endif
 
 update_pgtable:	
 		if (!page){
@@ -4855,6 +4864,7 @@ setpte:
 	set_pte_at(mm, address, page_table, entry);
 	/* No need to invalidate - it was non-present before */
 	update_mmu_cache(vma, address, page_table);
+
 unlock:
 	pte_unmap_unlock(page_table, ptl);
 	return 0;
@@ -5119,13 +5129,11 @@ static struct page *nv_alloc_page_numa( struct vm_area_struct *vma)
 		//spin_unlock(&nv_pagelist_lock);
 		return NULL;
    }
-
-#ifndef DEBUG_STATS
+#ifdef DEBUG_STATS
 	tot_nvpgs_used++;
 	if(tot_nvpgs_used % 1000 == 0)
 		printk("total allocated nv_pages %u \n",tot_nvpgs_used);
 #endif
-
 	//atomic_inc(&page->_count);
 	//spin_unlock(&nv_pagelist_lock);
    return page;
@@ -5160,7 +5168,7 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 	struct page *page = NULL;
     int ret = 0, nodeid=0;
 
-	BUG_ON(!vma);
+	//BUG_ON(!vma);
 
 #ifdef _NV_LOCKS
 	spin_lock(&nvpagelock);
@@ -5169,24 +5177,28 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 	page = hetero_getnxt_page(false);
 	if(!page){
 		//printk("KERN_ALERT getting heteropage failed \n");
-		goto page_error;
+		goto getnvpage_err;
 	}
+	page->nvdirty = PAGE_MIGRATED;
+	set_bit(PG_hetero, &page->flags);
+
 #ifdef LOCAL_DEBUG_FLAG
 	 printk(KERN_DEBUG "Success: using page from hetero\n");
 #endif
 #ifdef _NV_LOCKS
 	spin_unlock(&nvpagelock);
 #endif
-
 	return page; 
 
-page_error: 
+getnvpage_err: 
 #ifdef _NV_LOCKS
 	spin_unlock(&nvpagelock);
 #endif
 	return NULL; 
 }
 EXPORT_SYMBOL(getnvpage);
+
+
 #else
 struct page* getnvpage(struct vm_area_struct *vma ) {
 
