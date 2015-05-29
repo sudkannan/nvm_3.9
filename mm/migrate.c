@@ -3244,9 +3244,9 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 #endif	
 
 #if 1
-	hot_frame_list = get_hotpage_list(&hotpgcnt);
+	//hot_frame_list = get_hotpage_list(&hotpgcnt);
 	//get_hotpage_list(&tmplock);
-	//hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
+	hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
 	//get_hotpage_list(&tmplock);
  	if(!hotpgcnt || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
@@ -3334,7 +3334,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	}
 
 	//if(nr_migrate_success)
-	printk("cntr %u, nr_migrate_success: %u "
+	/*printk("cntr %u, nr_migrate_success: %u "
 			"nr_migrate_failed: %u, nr_incorrect_pg: %u "
 			"nr_migrate_retry: %u "
 			"nr_migrate_attempted: %u "
@@ -3344,7 +3344,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 			cntr, nr_migrate_success, nr_migrate_failed,
 			nr_incorrect_pg, nr_migrate_retry, nr_migrate_attempted,
 			nonrsrvpg_dbg_count, nr_page_freed, nr_alloc_fail,
-			nr_dup_hot_page, nr_invalid_page);
+			nr_dup_hot_page, nr_invalid_page);*/
 
 #ifdef DEBUG_TIMER
 	cntr=0;

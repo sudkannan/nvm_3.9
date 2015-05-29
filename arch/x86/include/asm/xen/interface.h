@@ -171,6 +171,16 @@ struct vcpu_guest_context {
 DEFINE_GUEST_HANDLE_STRUCT(vcpu_guest_context);
 #endif	/* !__ASSEMBLY__ */
 
+//per-vcpu counters structure
+struct perf_ctrs{
+        uint64_t instns;
+        uint64_t active;
+        uint64_t lmisses;
+        uint64_t rmisses;
+        uint64_t cycles;
+        int core_type;
+};
+
 /*
  * Prefix forces emulation of some non-trapping instructions.
  * Currently only CPUID.

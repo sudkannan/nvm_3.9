@@ -19,6 +19,11 @@ static int hsm_init_flag;
 static int alloc_shared_pages(void);
 static void free_shared_pages(void);
 
+/*perf counter related declarations*/
+#define READ_PERF_CNTRS
+#define MAX_VCPUS 12
+struct perf_ctrs perfcntr[MAX_VCPUS];
+
 asmlinkage long sys_hsm_read(unsigned int start)
 {
     unsigned int max_frames, frames_ppage, pidx;
@@ -84,6 +89,20 @@ static int alloc_shared_pages(void)
     return 0;
 }
 
+static int get_perf_counters(void)
+{
+    long ret;
+
+    if ((ret = HYPERVISOR_perf_counters(&perfcntr)) < 0)
+    {
+      	printk("ERROR, perf_counters() returned: %ld\n", ret);
+        return 1;
+    }
+    printk("get_perf_counters \n");
+    return 0;
+}
+
+
 asmlinkage long sys_hsm_alloc(void)
 {
     printk("sys_hsm_alloc\n");
@@ -128,6 +147,10 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
 		hsm_init_flag = 1;
 		sys_hsm_alloc();
 	}
+
+#ifdef READ_PERF_CNTRS
+	get_perf_counters();
+#endif
 
     frames_ppage = PAGE_SIZE / sizeof(struct frame);
     offset = 0;

@@ -472,6 +472,14 @@ HYPERVISOR_hsm_get_mfn(unsigned long *mfn)
 }
 
 static inline int
+HYPERVISOR_perfctr_op(struct perf_ctrs *arg)
+{
+	   return _hypercall1(int, perfctr_op, arg);
+}
+
+
+
+static inline int
 HYPERVISOR_hsm_free_mfn(unsigned long mfn)
 {
 	   return _hypercall1(int, hsm_free_page, mfn);
