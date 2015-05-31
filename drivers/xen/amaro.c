@@ -93,12 +93,12 @@ static int get_perf_counters(void)
 {
     long ret;
 
-    if ((ret = HYPERVISOR_perf_counters(&perfcntr)) < 0)
+    if ((ret = HYPERVISOR_perfctr_op(&perfcntr)) < 0)
     {
       	printk("ERROR, perf_counters() returned: %ld\n", ret);
         return 1;
     }
-    printk("get_perf_counters \n");
+    printk(KERN_ALERT "get_perf_counters \n");
     return 0;
 }
 
