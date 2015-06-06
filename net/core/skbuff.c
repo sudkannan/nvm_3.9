@@ -205,10 +205,10 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	u8 *data;
 	bool pfmemalloc;
 
-#ifdef HETEROMEM
+//#ifdef HETEROMEM
 		//printk(KERN_ALERT "skb_copy_ubufs: "
 		//	"alloc_page from hetero \n");
-#endif
+//#endif
 
 	cache = (flags & SKB_ALLOC_FCLONE)
 		? skbuff_fclone_cache : skbuff_head_cache;
@@ -382,9 +382,9 @@ refill:
 #endif
 			nc->frag.page = alloc_pages(gfp, order);
 
-#ifdef HETEROMEM
-skipalloc:			
-#endif
+//#ifdef HETEROMEM
+//skipalloc:			
+//#endif
 			if (likely(nc->frag.page))
 				break;
 			if (--order < 0)

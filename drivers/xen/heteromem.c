@@ -67,6 +67,7 @@ Also all code related to hotplug has been removed */
 #include <xen/interface/memory.h>
 #include <xen/balloon.h>
 #include <xen/heteromem.h>
+#include <xen/amaro.h>
 #include <xen/features.h>
 #include <xen/page.h>
 #include <linux/mm.h>
@@ -137,6 +138,9 @@ static unsigned int used_lst_pgcnt;
 static unsigned int dbg_resv_hetropg_cnt;
 static unsigned int hotpagecnt;
 static unsigned int mfnmatchcnt;
+
+/*app exit flags*/
+static unsigned int appexited;
 
 
 /* Main work function, always executed in process context. */
@@ -1079,6 +1083,26 @@ int heteromem_init(int idx, unsigned long start, unsigned long size)
 	return 0;
 }
 EXPORT_SYMBOL(heteromem_init);
+
+
+
+int heteromem_app_exit(void){
+
+	if(!appexited){
+		printk(KERN_ALERT "calling heteromem_app_exit...\n");
+		print_perf_counters();
+		reset_perf_counters();
+		appexited=1;
+	}
+}
+EXPORT_SYMBOL(heteromem_app_exit);
+
+int heteromem_app_enter(void){
+	printk(KERN_ALERT "calling heteromem_app_enter...\n");
+	reset_perf_counters();
+	appexited=0;
+}
+EXPORT_SYMBOL(heteromem_app_enter);
 
 
 

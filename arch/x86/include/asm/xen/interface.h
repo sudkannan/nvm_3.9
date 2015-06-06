@@ -142,6 +142,7 @@ struct perf_ctrs{
         uint64_t cycles;
         int core_type;
 };
+DEFINE_GUEST_HANDLE_STRUCT(perf_ctrs);
 
 
 /*

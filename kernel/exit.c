@@ -59,6 +59,8 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 
+#include <xen/heteromem.h>
+
 static void exit_mm(struct task_struct * tsk);
 
 static void __unhash_process(struct task_struct *p, bool group_dead)
@@ -710,6 +712,8 @@ void do_exit(long code)
 	struct task_struct *tsk = current;
 	int group_dead;
 
+
+
 	profile_task_exit(tsk);
 
 	WARN_ON(blk_needs_flush_plug(tsk));
@@ -799,6 +803,8 @@ void do_exit(long code)
 	check_stack_usage();
 	exit_thread();
 
+
+
 	/*
 	 * Flush inherited counters to the parent - before the parent
 	 * gets woken up by child-exit notifications.
@@ -874,6 +880,7 @@ void do_exit(long code)
 	smp_mb();
 	raw_spin_unlock_wait(&tsk->pi_lock);
 
+
 	/* causes final put_task_struct in finish_task_switch(). */
 	tsk->state = TASK_DEAD;
 	tsk->flags |= PF_NOFREEZE;	/* tell freezer to ignore us */
@@ -882,6 +889,7 @@ void do_exit(long code)
 	/* Avoid "noreturn function does return".  */
 	for (;;)
 		cpu_relax();	/* For when BUG is null */
+
 }
 
 EXPORT_SYMBOL_GPL(do_exit);
@@ -909,6 +917,13 @@ void
 do_group_exit(int exit_code)
 {
 	struct signal_struct *sig = current->signal;
+
+#ifdef HETEROMEM
+    if(current->heteroflag == PF_HETEROMEM){
+        printk(KERN_ALERT "Calling heteromem_app_exit....\n");
+        heteromem_app_exit();
+    }
+#endif
 
 	BUG_ON(exit_code & 0x80); /* core dumps don't get here */
 
@@ -939,6 +954,14 @@ do_group_exit(int exit_code)
  */
 SYSCALL_DEFINE1(exit_group, int, error_code)
 {
+
+#ifdef HETEROMEM
+	if(current->heteroflag == PF_HETEROMEM){
+		printk(KERN_ALERT "Calling heteromem_app_exit....\n");
+		heteromem_app_exit();
+	}
+#endif
+
 	do_group_exit((error_code & 0xff) << 8);
 	/* NOTREACHED */
 	return 0;

@@ -56,6 +56,7 @@
 #define HETERO_SKIPLIST_LEN 1024*512
 //#define SELECTIVE_HETERO_SCAN
 #define HETERO_PRINT_STATS 0
+#define HETERO_APP_INIT 10
 #define HOT_MIN_MIG_LIMIT 8
 //#define DEBUG_TIMER
 //#define HETEROSTATS
@@ -95,16 +96,12 @@ static unsigned int stat_tot_proc_pages;
 #define MPOL_MF_INVERT (MPOL_MF_INTERNAL << 1)          /* Invert check for nodemask */
 
 
-struct list_head mylist;
-
 #ifdef ENABLE_HETERO
 struct list_head hetero_list;
 unsigned int nr_heteropgcnt;
-static int init_hetero_list;
+int init_hetero_list;
 void init_hetero_list_fn();
 
-/*array containing mfns*/
-static unsigned long *skiplist_arr;
 
 #endif
 //#define HETERODEBUG
@@ -1218,17 +1215,7 @@ void init_hetero_list_fn(){
 	if(!init_hetero_list){
 		init_hetero_list =1;	
 		INIT_LIST_HEAD(&hetero_list);
-		sz=HETERO_SKIPLIST_LEN *sizeof(unsigned long);
-		skiplist_arr = (unsigned long)kmalloc(sz, GFP_KERNEL);
-		if(!skiplist_arr){
-			printk(KERN_ALERT "init_hetero_list_fn: "
-					"skiplist arr alloc failed \n"); 
-		}
 	}
-#ifdef HETERODEBUG
-	printk(KERN_ALERT "exiting init_hetero_list_fn \n");
-#endif
-
 	return;
 }
 EXPORT_SYMBOL(init_hetero_list);
@@ -1244,30 +1231,7 @@ struct list_head* get_hetero_list(unsigned int *nrpages){
 EXPORT_SYMBOL(get_hetero_list);
 
 
-int find_pfn(unsigned long pfn){
 
-	int idx =0;
-	
-	for(idx=0; idx < nr_heteropgcnt; idx++){
-		if( skiplist_arr[idx] == pfn)
-			return 1;	
-	}
-	return 0;
-}
-
-void hetero_update(struct page *page){
-
-	unsigned long pfn = page_to_pfn(page);
-
-	if(!find_pfn(pfn)) {
-		list_add(&page->nvlist, &hetero_list);
-		skiplist_arr[nr_heteropgcnt]= page_to_pfn(page);
-		nr_heteropgcnt++;
-	}
-#ifdef HETERODEBUG
-    printk(KERN_ALERT "exiting hetero_update \n");
-#endif
-}
 
 unsigned int debug_count_pagelist_cnt(struct list_head *from) {
 
@@ -2217,7 +2181,6 @@ static int hetero_do_pages_move(struct mm_struct *mm, unsigned long nr_pages,
 
 			printk( "isolating page %u\n",isolate_cnt);	
   		    list_del(&page->nvlist);
-			list_add_tail(&page->lru, &pagelist);
 			inc_zone_page_state(page, NR_ISOLATED_ANON +
 					    page_is_file_cache(page));
 		}
@@ -2962,6 +2925,7 @@ static int check_vma_exists(struct page *new, struct vm_area_struct *vma,
 
 static int find_page_vma(struct page *new, void *private)
 {
+
     return 	rmap_walk(new, check_vma_exists, private);
 }
 
@@ -2994,10 +2958,15 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 	 //Set only if page is migrated in my_migrate_pages.
 	 //page->nvdirty=PAGE_MIGRATED;
 	 
+	lock_page(page);
+
 	 if(!find_page_vma(page, private)){
 		nr_invalid_page++; 
+		unlock_page(page);
 		return -1;
 	 }
+
+	unlock_page(page);
 
 	nonrsrvpg_dbg_count++;
 
@@ -3062,10 +3031,10 @@ int hetero_page_filter(struct page *page){
 	//if(test_bit(PG_nvram, &page->flags)){
 	//	 return HETEROFAIL; 
 	//}
-	if(test_bit(PG_swapbacked, &page->flags)) //&& test_bit(PG_lru,&page->flags))
+	//if(test_bit(PG_swapbacked, &page->flags)) //&& test_bit(PG_lru,&page->flags))
 	//if(test_bit(PG_active, &page->flags) && !test_bit(PG_dirty,&page->flags) 
 	 //	&& !test_bit(PG_reserved,&page->flags) && !test_bit(PG_lru,&page->flags))
-	//if(test_bit(PG_active,&page->flags))
+	if(test_bit(PG_active,&page->flags))
 	{
 
 #if 0
@@ -3204,15 +3173,13 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	
 	start = 0;
 
-    if (flag == HETERO_PRINT_STATS) {
-		//pg_debug_count = 0;
-    	//beforemigrate_dbg_count=0;
-		//nonrsrvpg_dbg_count=0;
- 		//normalpg_dbg_count=0;
- 		//pg_debug_count=0;
-		//nr_migrate_success=0;
-		printk(KERN_ALERT "MIGRATE COUNT %u: \n",
-					nr_migrate_success);
+    if (flag == HETERO_APP_INIT) {
+
+ 		if(current)
+		  current->heteroflag = PF_HETEROMEM;
+
+		heteromem_app_enter();
+
 		return nr_migrate_success;
 	}
 
@@ -3224,16 +3191,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	}
 
 	nr_heteropgcnt=0;
-	INIT_LIST_HEAD(&mylist);
-	init_hetero_list_fn();
-    nodes_clear(nmask);
-    node_set(source, nmask);
-    /*
-     * This does not "check" the range but isolates all pages that
-     * need migration.  Between passing in the full user address
-     * space range and MPOL_MF_DISCONTIG_OK, this call can not fail.
-     */
-    VM_BUG_ON(!(flags & (MPOL_MF_MOVE | MPOL_MF_MOVE_ALL)));
+	//init_hetero_list_fn();
+
+	INIT_LIST_HEAD(&pagelist);
+
 
 #ifdef DEBUG_TIMER
         getnstimeofday (&start_hyercall);
@@ -3244,6 +3205,10 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 #endif	
 
 #if 1
+
+	if(current)		
+	current->heteroflag = PF_HETEROMEM;
+
 	//hot_frame_list = get_hotpage_list(&hotpgcnt);
 	//get_hotpage_list(&tmplock);
 	hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
@@ -3266,7 +3231,6 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 
 #ifdef DEBUG_TIMER
         getnstimeofday (&start_pgwalk);
-#endif
 		normalpg_dbg_count = 0;
 		nr_dup_hot_page=0;	
 		nr_invalid_page=0;
@@ -3279,6 +3243,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 		nr_alloc_fail=0;
 		nr_invalid_page=0;
 		nr_incorrect_pg=0;
+#endif
 
 	for (cntr=0; cntr < hotpgcnt; cntr++){
 
@@ -3306,9 +3271,13 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 		/*Filter certain kind of pages*/	
 		//if(hetero_page_filter(page) == HETEROFAIL)
 		//	continue;
+		
+		 //if (!PageAnon(page))
+			//continue;
 
 		flags = flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK;
 		migrate_hot_pages(page, &pagelist,flags);
+		//migrate_hot_pages(page, &hetero_list,flags);
 	}
 
 #ifdef DEBUG_TIMER
@@ -3326,6 +3295,8 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 		spin_lock(&migrate_lock);
 	  	err = my_migrate_pages(&pagelist, new_page_node, dest,
         	                      MIGRATE_SYNC, MR_SYSCALL);
+	  	//err = my_migrate_pages(&hetero_list, new_page_node, dest,
+        //	                      MIGRATE_SYNC, MR_SYSCALL);
         if (err) {
           putback_lru_pages(&pagelist);
 	    }else {
@@ -3765,4 +3736,5 @@ out:
 			continue;
 		}
 #endif
+
 

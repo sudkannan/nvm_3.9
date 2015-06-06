@@ -35,12 +35,13 @@ int heteromem_init(int idx, unsigned long start, unsigned long size);
 
 /*HeteroMem Get next page*/
 struct page *hetero_getnxt_page(bool prefer_highmem);
-
 int send_hotpage_skiplist();
-
 xen_pfn_t *get_hotpage_list(unsigned int *hotcnt);
-
 int is_hetero_hot_page(struct page *page);
+/* heteromem function when applications exits*/
+int heteromem_app_exit(void);
+/*heteromem application enter*/
+int heteromem_app_enter(void);
 
 struct device;
 #ifdef CONFIG_XEN_SELFBALLOONING

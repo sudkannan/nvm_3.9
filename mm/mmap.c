@@ -38,6 +38,7 @@
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
 #include "internal.h"
+#include <xen/heteromem.h>
 
 //#define LOCAL_DEBUG_FLAG_1
 //#define _DISABLE_PVM_MERGE

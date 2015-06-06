@@ -4,14 +4,14 @@
 #fakeroot make-kpkg --initrd kernel-image kernel-headers
 #dpkg -i ../linux-image-3.9.0_3.9.0-10.00.Custom_amd64.deb
 #dpkg -i ../linux-headers-3.9.0_3.9.0-10.00.Custom_amd64.deb
-#dpkg -i ../linux-headers-2.6.32.49+drm33.21_2.6.32.49+drm33.21-10.00.Custom_amd64.deb
+##dpkg -i ../linux-headers-2.6.32.49+drm33.21_2.6.32.49+drm33.21-10.00.Custom_amd64.deb
 #exit
 
 
 CC=/usr/lib/ccache/bin/gcc make -j15 &>compile.out
 CC=/usr/lib/ccache/bin/gcc make bzImage -j15 &>>compile.out
-CC=/usr/lib/ccache/bin/gcc make  modules -j15
-CC=/usr/lib/ccache/bin/gcc make  modules_install -j15
+#CC=/usr/lib/ccache/bin/gcc make  modules -j15
+#CC=/usr/lib/ccache/bin/gcc make  modules_install -j15
 
  y="3.9.0+"	
    if [[ x$ == x ]];

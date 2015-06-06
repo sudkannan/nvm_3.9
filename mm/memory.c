@@ -3570,12 +3570,6 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	int ret;
 	int page_mkwrite = 0;
 
-#ifdef HETEROMEM
-		//if(current->mm->def_flags && VM_HETERO){
-		//	printk(KERN_ALERT "mm->def_flags VM_HETERO \n");
-		//}	
-#endif
-
 	/*
 	 * If we do COW later, allocate page befor taking lock_page()
 	 * on the file cache page. This will reduce lock holding time.
@@ -4772,8 +4766,6 @@ write_fault:
 		goto oom;
 
         page = NULL;
-
-#ifdef HETEROMEM_1
 		page = hetero_getnxt_page(false);
 		if(!page){
 			page = alloc_zeroed_user_highpage_movable(vma, address);
@@ -4785,7 +4777,6 @@ write_fault:
 			page->nvdirty = PAGE_MIGRATED;	
 			page_reuse=1;
 		}
-#else
 		if(!vma->noPersist) {
 			//printk(KERN_ALERT "using persist vma \n");	
 		    page = get_nv_faultpg(vma, address, &err);
@@ -4823,7 +4814,6 @@ write_fault:
 #endif
 #endif
 		}
-#endif
 
 update_pgtable:	
 		if (!page){
