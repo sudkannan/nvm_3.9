@@ -2933,6 +2933,7 @@ static int find_page_vma(struct page *new, void *private)
 
 static int migrate_hot_pages(struct page *page, void *private, int flags)
 {
+	int page_was_locked=0;
 	
 	if (!page){
 		nr_invalid_page++;
@@ -2957,16 +2958,25 @@ static int migrate_hot_pages(struct page *page, void *private, int flags)
 	 ///*page has been already added to the dirty list*/
 	 //Set only if page is migrated in my_migrate_pages.
 	 //page->nvdirty=PAGE_MIGRATED;
-	 
-	lock_page(page);
+	
+	if(!PageLocked(page)){
+		lock_page(page);
+		page_was_locked = 0;
+	}else {
+		page_was_locked=1;
+	}
 
 	 if(!find_page_vma(page, private)){
 		nr_invalid_page++; 
-		unlock_page(page);
+
+		if(!page_was_locked)
+			unlock_page(page);
+
 		return -1;
 	 }
 
-	unlock_page(page);
+	if(!page_was_locked) 
+		unlock_page(page);
 
 	nonrsrvpg_dbg_count++;
 
@@ -3157,7 +3167,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	unsigned int size=0;
 	unsigned int hotpgcnt=0;
 	unsigned long end=0;
-	xen_pfn_t *hot_frame_list;
+	xen_pfn_t *hot_frame_list=NULL;
 	nodemask_t nmask;
     LIST_HEAD(pagelist);
 	//unsigned long migratetot=0;
@@ -3171,17 +3181,17 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	struct timespec start_hyercall,end_hyercall;
 #endif //DEBUG_TIMER
 	
-	start = 0;
 
     if (flag == HETERO_APP_INIT) {
 
  		if(current)
 		  current->heteroflag = PF_HETEROMEM;
 
-		heteromem_app_enter();
+		heteromem_app_enter(start);
 
 		return nr_migrate_success;
 	}
+	start=0;
 
 	if (!mm)
 		return 0;
@@ -3209,11 +3219,11 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	if(current)		
 	current->heteroflag = PF_HETEROMEM;
 
-	//hot_frame_list = get_hotpage_list(&hotpgcnt);
+	hot_frame_list = get_hotpage_list(&hotpgcnt);
 	//get_hotpage_list(&tmplock);
-	hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
+	//hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
 	//get_hotpage_list(&tmplock);
- 	if(!hotpgcnt || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
+ 	if( (hotpgcnt == 0) || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
 	}
 

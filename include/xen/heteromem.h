@@ -41,7 +41,7 @@ int is_hetero_hot_page(struct page *page);
 /* heteromem function when applications exits*/
 int heteromem_app_exit(void);
 /*heteromem application enter*/
-int heteromem_app_enter(void);
+int heteromem_app_enter(unsigned long arg);
 
 struct device;
 #ifdef CONFIG_XEN_SELFBALLOONING

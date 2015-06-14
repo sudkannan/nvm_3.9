@@ -3278,7 +3278,8 @@ munmap_back:
 #endif
 
 
-#ifdef HETEROMEM
+//#ifdef HETEROMEM
+#if 0
      if(current->mm){
          current->mm->def_flags = VM_HETERO | current->mm->def_flags;
 		 current->heteroflag = PF_HETEROMEM;
@@ -3756,7 +3757,8 @@ asmlinkage long sys_nv_mmap_pgoff( unsigned long addr, unsigned long len,
      if(a.noPersist)
 		goto out;
 
-#ifdef HETEROMEM
+//#ifdef HETEROMEM
+#if 0
 	 if(current->mm){
 		 current->mm->def_flags = VM_HETERO | current->mm->def_flags;
 		 printk(KERN_ALERT "Setting the current->mm->def_flags \n");
