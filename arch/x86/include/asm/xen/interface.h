@@ -145,6 +145,17 @@ struct perf_ctrs{
 DEFINE_GUEST_HANDLE_STRUCT(perf_ctrs);
 
 
+struct hetero_params{
+        uint64_t clock_period_ms;
+        uint64_t shrink_freq;
+        uint64_t max_hot_scan;
+        uint64_t max_temp_hot_scan;
+        uint64_t usesharedmem;
+};
+DEFINE_GUEST_HANDLE_STRUCT(hetero_params);
+
+
+
 /*
  * The following is all CPU context. Note that the fpu_ctxt block is filled
  * in by FXSAVE if the CPU has feature FXSR; otherwise FSAVE is used.

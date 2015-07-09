@@ -692,7 +692,12 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 			if (++migratetype == MIGRATE_PCPTYPES)
 				migratetype = 0;
 			list = &pcp->lists[migratetype];
+
+			if(migratetype == MIGRATE_HETERO)
+				continue;
+		
 		} while (list_empty(list));
+
 
 		/* This is the only non-empty list. Free them all. */
 		if (batch_free == MIGRATE_PCPTYPES)
@@ -702,9 +707,16 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 			int mt;	/* migratetype of the to-be-freed page */
 
 			page = list_entry(list->prev, struct page, lru);
+
+			//if(page->nvdirty == PAGE_MIGRATED) {
+				//printk(KERN_ALERT "free_pcppages_bulk: Hetero page, skip\n");
+				//continue;
+			//}
+			
 			/* must delete as __free_one_page list manipulates */
 			list_del(&page->lru);
 			mt = get_freepage_migratetype(page);
+
 			/* MIGRATE_MOVABLE list may include MIGRATE_RESERVEs */
 			__free_one_page(page, zone, 0, mt);
 			trace_mm_page_pcpu_drain(page, 0, mt);
@@ -731,7 +743,58 @@ static void free_one_page(struct zone *zone, struct page *page, int order,
 	spin_unlock(&zone->lock);
 }
 
+
 static bool free_pages_prepare(struct page *page, unsigned int order)
+{
+	int i;
+	int bad = 0;
+	int heteropage=0;
+
+	trace_mm_page_free(page, order);
+	kmemcheck_free_shadow(page, order);
+
+#ifdef HETEROMEM
+	if(page->nvdirty == PAGE_MIGRATED){
+		heteropage=1;
+	}
+#endif
+
+	if (PageAnon(page))
+		page->mapping = NULL;
+
+	for (i = 0; i < (1 << order); i++)
+		bad += free_pages_check(page + i);
+
+	if (bad){
+		return false;
+	}
+
+	if (!PageHighMem(page)) {
+		debug_check_no_locks_freed(page_address(page),PAGE_SIZE<<order);
+		debug_check_no_obj_freed(page_address(page),
+					   PAGE_SIZE << order);
+	}
+
+#ifdef HETEROMEM
+	if(heteropage){
+		page->nvdirty = PAGE_MIGRATED;
+	}
+#endif
+
+	arch_free_page(page, order);
+	kernel_map_pages(page, 1 << order, 0);
+
+#ifdef HETEROMEM
+	if(heteropage){
+		page->nvdirty = PAGE_MIGRATED;
+	}
+#endif
+	return true;
+}
+
+
+/*HETERO MEMORY changes*/
+static bool free_pages_prepare_old(struct page *page, unsigned int order)
 {
 	int i;
 	int bad = 0;
@@ -745,19 +808,23 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 	for (i = 0; i < (1 << order); i++)
 		bad += free_pages_check(page + i);
 
-#ifdef HETEROMEM
+#if 1
+//#ifdef HETEROMEM
 		if(page->nvdirty == PAGE_MIGRATED){
-			//printk("page->nvdirty bag page \n");
-			//clear_page(page);
-			//prep_new_page(page, 1 << order, 0);
 			page->nvdirty = PAGE_MIGRATED;
-		    //printk("page->nvdirty == PAGE_MIGRATED adding to ready list \n");
-			add_readylist_setup(page);
-		}
 
-		//if(test_bit(PG_hetero, &page->flags)) {
-		    //printk(KERN_ALERT "free_pages_prepare: freeing PG_hetero flag \n");
-		//}
+			/*if(test_bit(PG_swapbacked, &page->flags))
+				clear_bit(PG_swapbacked, &page->flags);	
+
+			if(test_bit(PG_mappedtodisk, &page->flags))
+				clear_bit(PG_mappedtodisk, &page->flags);
+
+			if(test_bit(PG_swapcache, &page->flags))
+				clear_bit(PG_swapcache, &page->flags);*/
+
+			add_readylist_setup(page);
+			return false;
+		}
 #endif
 
 	if (bad){
@@ -980,6 +1047,8 @@ static int fallbacks[MIGRATE_TYPES][4] = {
 	[MIGRATE_CMA]         = { MIGRATE_RESERVE }, /* Never used */
 #else
 	[MIGRATE_MOVABLE]     = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE,   MIGRATE_RESERVE },
+	/*HETERO MEMORY changes*/
+	[MIGRATE_HETERO]     = {MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_RESERVE, MIGRATE_HETERO},
 #endif
 	[MIGRATE_RESERVE]     = { MIGRATE_RESERVE }, /* Never used */
 #ifdef CONFIG_MEMORY_ISOLATION
@@ -1367,11 +1436,12 @@ void mark_free_pages(struct zone *zone)
 }
 #endif /* CONFIG_PM */
 
+
 /*
  * Free a 0-order page
  * cold == 1 ? free a cold page : free a hot page
  */
-void free_hot_cold_page(struct page *page, int cold)
+void free_hot_cold_page_orig(struct page *page, int cold)
 {
 	struct zone *zone = page_zone(page);
 	struct per_cpu_pages *pcp;
@@ -1397,17 +1467,6 @@ void free_hot_cold_page(struct page *page, int cold)
     }
 #endif
 
-	/*if(test_bit(PG_hetero, &page->flags)) {
-	    printk(KERN_ALERT "free_pages_prepare: freeing PG_hetero flag \n");
-	}
-
-	if(test_bit(PG_nvram, &page->flags)) {
-	    printk(KERN_ALERT "free_pages_prepare: freeing PG_nvram flag \n");
-	}
-	if(page->nvdirty == PAGE_MIGRATED){
-		printk(KERN_ALERT "free_pages_prepare: page->nvdirty == PAGE_MIGRATED \n");
-	}*/
-
 skip:
 
 	if (!free_pages_prepare(page, 0)) {
@@ -1418,6 +1477,7 @@ skip:
 	set_freepage_migratetype(page, migratetype);
 	local_irq_save(flags);
 	__count_vm_event(PGFREE);
+
 
 	/*
 	 * We only track unmovable, reclaimable and movable on pcp lists.
@@ -1444,6 +1504,109 @@ skip:
 		list_add_tail(&page->lru, &pcp->lists[migratetype]);
 	else
 		list_add(&page->lru, &pcp->lists[migratetype]);
+	pcp->count++;
+	if (pcp->count >= pcp->high) {
+		free_pcppages_bulk(zone, pcp->batch, pcp);
+		pcp->count -= pcp->batch;
+	}
+
+#ifdef CONFIG_NVM_1
+	if(test_bit(PG_nvram, &page->flags)) {
+		test_and_clear_bit(PG_nvram, &page->flags);
+		nvm_freed_pgcnt++;
+		printk("freeing a NVM page %u\n", nvm_freed_pgcnt);
+   }		
+#endif
+
+out:
+	local_irq_restore(flags);
+}
+
+
+
+/*HETERO MEMORY changes*/
+/*
+ * Free a 0-order page
+ * cold == 1 ? free a cold page : free a hot page
+ */
+static int heteropages;
+
+void free_hot_cold_page(struct page *page, int cold)
+{
+	struct zone *zone = page_zone(page);
+	struct per_cpu_pages *pcp;
+	unsigned long flags;
+	int migratetype;
+	struct vm_area_struct *vma;
+	struct mm_struct *mm;
+	char *addr;	
+	int hetroflg;
+
+skip:
+	if (!free_pages_prepare(page, 0)) {
+		//if(page->nvdirty == PAGE_MIGRATED) {
+			//printk(KERN_ALERT "free_pages_prepare returning false \n");
+		//}
+		return;
+	}
+
+	/*HETERO MEMORY changes*/
+#if 1
+	if(page->nvdirty == PAGE_MIGRATED) {
+		set_pageblock_migratetype(page, MIGRATE_HETERO);
+		migratetype = get_pageblock_migratetype(page);
+		set_freepage_migratetype(page, migratetype);
+		//printk(KERN_ALERT "Adding to migratetype %u \n",migratetype);
+	}else 
+#endif
+	{ 	
+	migratetype = get_pageblock_migratetype(page);
+	set_freepage_migratetype(page, migratetype);
+	}
+
+	local_irq_save(flags);
+	__count_vm_event(PGFREE);
+
+
+	//if(page->nvdirty != PAGE_MIGRATED) 
+	{
+
+		/*
+		 * We only track unmovable, reclaimable and movable on pcp lists.
+		 * Free ISOLATE pages back to the allocator because they are being
+		 * offlined but treat RESERVE as movable pages so we can get those
+		 * areas back if necessary. Otherwise, we may have to free
+		 * excessively into the page allocator
+		 */
+		if (migratetype >= MIGRATE_PCPTYPES) {
+			if (unlikely(is_migrate_isolate(migratetype))) {
+
+				free_one_page(zone, page, 0, migratetype);
+				goto out;
+			}
+			migratetype = MIGRATE_MOVABLE;
+		}
+	}
+
+	pcp = &this_cpu_ptr(zone->pageset)->pcp;
+
+	if (cold) {
+		if(page->nvdirty == PAGE_MIGRATED) {
+			heteropages++;
+			//printk(KERN_ALERT "cold  list heteropages %u "
+			//		"migratetype %u\n", heteropages,migratetype);
+		}
+		list_add_tail(&page->lru, &pcp->lists[migratetype]);
+	}
+	else{
+		if(page->nvdirty == PAGE_MIGRATED) {
+			heteropages++;
+			//printk(KERN_ALERT "hot list heteropages %u "
+			//		"migratetype %u\n", heteropages,migratetype);
+		}
+		list_add(&page->lru, &pcp->lists[migratetype]);
+	}
+
 	pcp->count++;
 	if (pcp->count >= pcp->high) {
 		free_pcppages_bulk(zone, pcp->batch, pcp);
@@ -2794,7 +2957,6 @@ void __free_pages(struct page *page, unsigned int order)
 			__free_pages_ok(page, order);
 	}
 }
-
 EXPORT_SYMBOL(__free_pages);
 
 void free_pages(unsigned long addr, unsigned int order)
@@ -3029,6 +3191,8 @@ static void show_migration_types(unsigned char type)
 		[MIGRATE_UNMOVABLE]	= 'U',
 		[MIGRATE_RECLAIMABLE]	= 'E',
 		[MIGRATE_MOVABLE]	= 'M',
+		/*HETERO MEMORY changes*/
+		[MIGRATE_HETERO] = 'H',
 		[MIGRATE_RESERVE]	= 'R',
 #ifdef CONFIG_CMA
 		[MIGRATE_CMA]		= 'C',
@@ -6292,7 +6456,7 @@ void dump_page(struct page *page)
 }
 
 //NVRAM changes
-
+/*HETERO MEMORY changes*/
 /*
  * This is the 'heart' of the zoned buddy allocator for persistent memory.
  */
@@ -6303,20 +6467,16 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
     enum zone_type high_zoneidx = gfp_zone(gfp_mask);
     struct zone *preferred_zone;
     struct page *page;
-    int migratetype = allocflags_to_migratetype(gfp_mask);
+    int migratetype = MIGRATE_HETERO;
     nodemask_t *nodemask;
 
     /* Persistence memory changes */
-    if( gfp_mask & __GFP_PERSISTENCE)
-        printk("__alloc_pages_nodemask: __GFP_PERSISTENCE flag is set \n");
+    //if( gfp_mask & __GFP_PERSISTENCE)
+      //  printk("__alloc_pages_nodemask: __GFP_PERSISTENCE flag is set \n");
 
     //TODO: get Node mask by finding out list of NVRAM nodes and allocate them
-
-
     gfp_mask &= gfp_allowed_mask;
-
     lockdep_trace_alloc(gfp_mask);
-
     might_sleep_if(gfp_mask & __GFP_WAIT);
 
     if (should_fail_alloc_page(gfp_mask, order))
@@ -6332,6 +6492,9 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
     /* The preferred zone is used for statistics later */
     first_zones_zonelist(zonelist, high_zoneidx, nodemask, &preferred_zone);
     if (!preferred_zone) {
+		if(!page) {
+			printk(KERN_ALERT "get_page_from_freelist !preferred_zone \n");
+		}
         return NULL;
     }
 
@@ -6339,6 +6502,13 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
     page = get_page_from_freelist(gfp_mask|__GFP_HARDWALL, nodemask, order,
             zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET,
             preferred_zone, migratetype);
+
+	//if(!page) {
+	//	printk(KERN_ALERT "get_page_from_freelist failed \n");
+	//}
+	//if(page && page->nvdirty != PAGE_MIGRATED) {
+	//	printk(KERN_ALERT "get_page_from_freelist page not PAGE_MIGRATED \n");
+	//}
     if (unlikely(!page))
         page = __alloc_pages_slowpath(gfp_mask, order,
                 zonelist, high_zoneidx, nodemask,
@@ -6348,9 +6518,5 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
     return page;
 }
 EXPORT_SYMBOL(__alloc_pages_nvram);
-
-
-
-
 //NVRAM changes
 

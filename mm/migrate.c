@@ -3155,7 +3155,13 @@ int hetero_filter(struct vm_area_struct * vmatmp){
  */
 //static int show_numa_map(unsigned long start)
 //SYSCALL_DEFINE1(move_inactpages, unsigned long, start)
-asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
+asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag, 
+									unsigned int hot_scan_freq, 
+									unsigned int hot_scan_limit,
+									unsigned int fastmemlimit,
+									unsigned int usesharedmem,
+									unsigned int hot_shrink_freq)
+
 {
 
 	struct vm_area_struct * vma;
@@ -3187,7 +3193,12 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
  		if(current)
 		  current->heteroflag = PF_HETEROMEM;
 
-		heteromem_app_enter(start);
+		heteromem_app_enter(start, 
+							hot_scan_freq,
+							hot_scan_limit,
+							hot_shrink_freq,
+							usesharedmem, 
+							fastmemlimit);
 
 		return nr_migrate_success;
 	}
@@ -3219,10 +3230,12 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	if(current)		
 	current->heteroflag = PF_HETEROMEM;
 
-	hot_frame_list = get_hotpage_list(&hotpgcnt);
-	//get_hotpage_list(&tmplock);
-	//hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
-	//get_hotpage_list(&tmplock);
+	/*if(!usesharedmem){
+		hot_frame_list = get_hotpage_list(&hotpgcnt);
+	}else*/ 
+	{
+		hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
+	}
  	if( (hotpgcnt == 0) || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
 	}

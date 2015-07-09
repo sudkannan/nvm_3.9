@@ -19,12 +19,13 @@ static int alloc_shared_pages(void);
 static void free_shared_pages(void);
 
 /*perf counter related declarations*/
-#define READ_PERF_CNTRS
+//#define READ_PERF_CNTRS
 #define MAX_VCPUS 12
 #define RESET_PERFCOUNT 0
 #define READ_PERFCOUNT 1
 
 struct perf_ctrs *perfcntr;
+struct hetero_params *tmphetparam;
 struct perf_ctrs p_cores_sum;
 struct perf_ctrs prev_cores_sum;
 spinlock_t perfrd_lock;
@@ -95,15 +96,44 @@ static int alloc_shared_pages(void)
     return 0;
 }
 
+
+int init_hetero_params(unsigned int hot_scan_freq,
+      unsigned int hot_scan_limit,
+      unsigned int hot_shrink_freq,
+      unsigned int usesharedmem) {
+
+	int ret=0;
+	GUEST_HANDLE(hetero_params) xen_guest_handle_hetero_params;
+
+	if(!tmphetparam) {
+		tmphetparam = kzalloc(sizeof(struct hetero_params), GFP_KERNEL);
+		if(!tmphetparam){
+			printk(KERN_ALERT "perfcntr alloc failed \n");
+			return -1;
+		}
+	}
+
+	tmphetparam->clock_period_ms=hot_scan_freq;
+	tmphetparam->shrink_freq= hot_shrink_freq;
+	tmphetparam->max_hot_scan=hot_scan_limit;
+	tmphetparam->max_temp_hot_scan=hot_scan_limit/2;
+	tmphetparam->usesharedmem=usesharedmem;
+
+	set_xen_guest_handle(xen_guest_handle_hetero_params, tmphetparam);
+    if ((ret = HYPERVISOR_set_hetero_param_op(0, xen_guest_handle_hetero_params)) < 0)
+	//if ((ret = HYPERVISOR_set_hetero_param_op(0, tmphetparam)) < 0)
+    {
+      	printk("ERROR, set_hetero_param_op(() returned: %ld\n", ret);
+    }
+
+	return ret;
+}
+
 int reset_perf_counters(void)
 {
 	int ret, count;
 	static struct perf_ctrs tmpperfcntr;
-	//GUEST_HANDLE(perf_ctrs) xen_guest_handle_perfctr;
-	//set_xen_guest_handle(xen_guest_handle_perfctr, &tmpperfcntr);
 
-	//printk("Tot INSTS: %lu Tot CYCLES: %lu Tot LLCMISSES: %lu \n",
-	  //    p_cores_sum.instns, p_cores_sum.cycles, p_cores_sum.lmisses);
 
 	prev_cores_sum.instns = p_cores_sum.instns;
 	prev_cores_sum.cycles = p_cores_sum.cycles;
@@ -136,6 +166,7 @@ int get_perf_counters(void)
 			printk(KERN_ALERT "perfcntr alloc failed \n");
 			return -1;
 		}
+
 	}
 	set_xen_guest_handle(xen_guest_handle_perfctr, perfcntr);
 
@@ -181,10 +212,18 @@ int print_perf_counters(void)
 }
 EXPORT_SYMBOL(print_perf_counters);
 
-
-void perf_set_test_arg(unsigned long arg){
+void perf_set_test_arg(unsigned long arg,
+                         unsigned int hot_scan_freq,
+                         unsigned int hot_scan_limit,
+                         unsigned int hot_shrink_freq,
+                         unsigned int usesharedmem)
+{
 
 	LLC_MISS_MIGRATE_THRESHOLD = arg;
+	//Perform hetero initialization
+	init_hetero_params(hot_scan_freq, hot_scan_limit, 
+						hot_shrink_freq, usesharedmem);
+
 }
 EXPORT_SYMBOL(perf_set_test_arg);
 
@@ -273,7 +312,7 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
 		*hotcnt =0;
 		return frame_list;
 	}
-	reset_perf_counters();
+	//reset_perf_counters();
 #endif
 
     frames_ppage = PAGE_SIZE / sizeof(struct frame);

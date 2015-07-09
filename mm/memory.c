@@ -131,7 +131,7 @@ spinlock_t nvbiglock;
 #endif
 
 int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages);
-static int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
+int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		unsigned int flags);
 
@@ -3419,9 +3419,27 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
-	page = alloc_zeroed_user_highpage_movable(vma, address);
-	if (!page)
-		goto oom;
+#if 0
+	if(current && current->heteroflag == PF_HETEROMEM){
+
+       page = NULL;
+       page = hetero_getnxt_page(false);
+       if(!page){
+           page = alloc_zeroed_user_highpage_movable(vma, address);
+           if(!page) {
+               goto oom;
+           }
+       }else {
+           set_bit(PG_hetero, &page->flags);
+           page->nvdirty = PAGE_MIGRATED;
+       }
+	}else
+#endif
+	{
+		page = alloc_zeroed_user_highpage_movable(vma, address);
+		if (!page)
+			goto oom;
+	}
 	__SetPageUptodate(page);
 
 	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
@@ -4714,7 +4732,7 @@ void copy_user_huge_page(struct page *dst, struct page *src,
  * but allow concurrent faults), and pte mapped but not yet locked.
  * We return with mmap_sem still held, but pte unmapped and unlocked.
  */
-static int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
+int do_anonymous_nvmem_page1(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		unsigned int flags)
 {
@@ -4786,7 +4804,7 @@ oom:
  * but allow concurrent faults), and pte mapped but not yet locked.
  * We return with mmap_sem still held, but pte unmapped and unlocked.
  */
-int do_anonymous_nvmem_page1(struct mm_struct *mm, struct vm_area_struct *vma,
+int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		unsigned int flags)
 {
@@ -4837,7 +4855,8 @@ write_fault:
 		goto oom;
 
         page = NULL;
-		page = hetero_getnxt_page(false);
+		//page = hetero_getnxt_page(false);
+		page = nv_alloc_page_numa(vma);
 		if(!page){
 			page = alloc_zeroed_user_highpage_movable(vma, address);
 			if(!page) {	
@@ -4848,6 +4867,7 @@ write_fault:
 			page->nvdirty = PAGE_MIGRATED;	
 			page_reuse=1;
 		}
+#if 0
 		if(!vma->noPersist) {
 			//printk(KERN_ALERT "using persist vma \n");	
 		    page = get_nv_faultpg(vma, address, &err);
@@ -4885,6 +4905,7 @@ write_fault:
 #endif
 #endif
 		}
+#endif
 
 update_pgtable:	
 		if (!page){
@@ -5240,12 +5261,15 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 		//printk("KERN_ALERT getting heteropage failed \n");
 		goto getnvpage_err;
 	}
+
+#if 0	
 	page->nvdirty = PAGE_MIGRATED;
 	set_bit(PG_hetero, &page->flags);
-
-#ifdef LOCAL_DEBUG_FLAG
-	 printk(KERN_DEBUG "Success: using page from hetero\n");
 #endif
+
+	/*HETERO MEMORY changes*/
+	//page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
+
 #ifdef _NV_LOCKS
 	spin_unlock(&nvpagelock);
 #endif
@@ -5258,6 +5282,67 @@ getnvpage_err:
 	return NULL; 
 }
 EXPORT_SYMBOL(getnvpage);
+
+/*memory.c*/
+/*HETERO MEMORY changes*/
+struct page* get_hetero_io_page(struct vm_area_struct *vma ) {
+
+    struct page *page = NULL;
+    int ret = 0, nodeid=0;
+
+#ifdef _NV_LOCKS
+    spin_lock(&nvpagelock);
+#endif
+    page = hetero_getnxt_page(false);
+    if(!page){
+        goto getnvpage_io_err;
+    }
+    //page->nvdirty = PAGE_MIGRATED;
+    //set_bit(PG_hetero, &page->flags);
+#ifdef _NV_LOCKS
+    spin_unlock(&nvpagelock);
+#endif
+    return page;
+getnvpage_io_err:
+#ifdef _NV_LOCKS
+    spin_unlock(&nvpagelock);
+#endif
+    return NULL;
+}
+EXPORT_SYMBOL(get_hetero_io_page);
+
+
+struct page* get_hetero_io_page_old(struct vm_area_struct *vma ) {
+
+    struct page *page = NULL;
+    int ret = 0, nodeid=0;
+
+#ifdef _NV_LOCKS
+    spin_lock(&nvpagelock);
+#endif
+
+    page = hetero_getnxt_io_page(false);
+    if(!page){
+        //printk("KERN_ALERT getting heteropage failed \n");
+        goto getnvpage_err;
+    }
+    page->nvdirty = PAGE_MIGRATED;
+    set_bit(PG_hetero, &page->flags);
+
+#ifdef LOCAL_DEBUG_FLAG
+     printk(KERN_DEBUG "Success: using page from hetero\n");
+#endif
+#ifdef _NV_LOCKS
+    spin_unlock(&nvpagelock);
+#endif
+    return page;
+getnvpage_err:
+#ifdef _NV_LOCKS
+    spin_unlock(&nvpagelock);
+#endif
+    return NULL;
+}
+EXPORT_SYMBOL(get_hetero_io_page_old);
 
 
 #else

@@ -1900,9 +1900,9 @@ struct nvmap_arg_struct {
 
 extern int getfree_nv_list_count(void);
 extern unsigned long do_persistent_alloc(unsigned long addr, unsigned long len);
-//extern int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
-  //              unsigned long address, pte_t *page_table, pmd_t *pmd,
-    //            unsigned int flags);
+extern int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
+                unsigned long address, pte_t *page_table, pmd_t *pmd,
+                unsigned int flags);
 extern int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages);
 extern unsigned int generate_unique_id (struct vm_area_struct *vma);
 extern struct nv_proc_obj *create_proc_obj(unsigned int );
@@ -1922,6 +1922,7 @@ extern unsigned long do_nv_mmap_pgoff(struct file *file, unsigned long addr,
 //get a persistent memory page
 ////defined in memory.c
 extern struct page* getnvpage(struct vm_area_struct*);
+extern struct page* get_hetero_io_page(struct vm_area_struct *vma );
 
 //intialize persistent memory mao
 int inti_pmem_map(void);

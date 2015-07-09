@@ -269,8 +269,12 @@ asmlinkage long sys_copydirtpages(
                         struct nvmap_arg_struct __user *nvarg,
                         unsigned int  __user *dest);
 
-asmlinkage long sys_move_inactpages(unsigned long start,  unsigned long migsize);
-
+asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag,
+                         unsigned int hot_scan_freq,
+                         unsigned int hot_scan_limit,
+                         unsigned int hot_shrink_freq,
+                         unsigned int usesharedmem,
+						 unsigned int maxfastmempgs);
 //NVM Changes
 
 
@@ -938,7 +942,6 @@ asmlinkage long sys_copydirtpages(
                         struct nvmap_arg_struct __user *nvarg,
                         unsigned int  __user *dest);
 
-asmlinkage long sys_move_inactpages(unsigned long start,  unsigned long migsize);
 //NVM Changes
 
 #endif

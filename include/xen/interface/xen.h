@@ -61,6 +61,8 @@
 #define __HYPERVISOR_hsm_get_page         44
 #define __HYPERVISOR_hsm_free_page        45
 #define __HYPERVISOR_perfctr_op			  46
+#define __HYPERVISOR_set_hetero_param_op  47
+
 
 /* Architecture-specific hypercall definitions. */
 #define __HYPERVISOR_arch_0               48

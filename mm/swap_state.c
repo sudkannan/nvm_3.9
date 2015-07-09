@@ -20,6 +20,7 @@
 #include <linux/page_cgroup.h>
 
 #include <asm/pgtable.h>
+#include <xen/heteromem.h>
 
 /*
  * swapper_space is a fiction, retained to simplify the path through
@@ -167,6 +168,14 @@ int add_to_swap(struct page *page)
 
 	VM_BUG_ON(!PageLocked(page));
 	VM_BUG_ON(!PageUptodate(page));
+
+/*HETERO MEMORY changes*/
+/*
+#ifdef HETEROMEM
+	if(page->nvdirty == PAGE_MIGRATED) {
+		return 0;
+	}
+#endif*/
 
 	entry = get_swap_page();
 	if (!entry.val)
