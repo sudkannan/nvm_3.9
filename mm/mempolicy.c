@@ -96,6 +96,8 @@
 #include <asm/uaccess.h>
 #include <linux/random.h>
 
+#include <xen/heteromem.h>
+
 #include "internal.h"
 
 /* Internal flags */
@@ -1988,6 +1990,7 @@ alloc_pages_vma(gfp_t gfp, int order, struct vm_area_struct *vma,
 	struct page *page;
 	unsigned int cpuset_mems_cookie;
 
+
 retry_cpuset:
 	pol = get_vma_policy(current, vma, addr);
 	cpuset_mems_cookie = get_mems_allowed();
@@ -2003,6 +2006,14 @@ retry_cpuset:
 
 		return page;
 	}
+
+	/*if(current && current->heteroflag == PF_HETEROMEM){
+		//page = alloc_pages_nvram(node, gfp, order);
+		page = hetero_alloc_hetero(node, gfp, order);
+		if(page) return page;
+	}*/
+
+
 	page = __alloc_pages_nodemask(gfp, order,
 				      policy_zonelist(gfp, pol, node),
 				      policy_nodemask(gfp, pol));

@@ -369,8 +369,8 @@ refill:
 		if (order)
 			gfp |= __GFP_COMP | __GFP_NOWARN;
 
-#ifdef HETEROMEM
-//#if 0
+//#ifdef HETEROMEM
+#if 0
 	if(current && (current->heteroflag && PF_HETEROMEM)){
 		 page = get_hetero_io_page(NULL);
 		 if(page){
@@ -817,7 +817,8 @@ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask)
 		u8 *vaddr;
 		skb_frag_t *f = &skb_shinfo(skb)->frags[i];
 
-#ifdef HETEROMEM
+//#ifdef HETEROMEM
+#if 0
 		if(current && (current->heteroflag && PF_HETEROMEM)){
 			printk(KERN_ALERT "skb_copy_ubufs: alloc_page from hetero \n");
 			page = get_hetero_io_page(NULL);

@@ -530,22 +530,15 @@ struct page *__page_cache_alloc(gfp_t gfp)
 		return page;
 	}
 
-#if 1
-//#ifdef HETEROMEM
+//#if 0
+#ifdef HETEROMEM
 		if(current && current->heteroflag == PF_HETEROMEM){
 			//printk(KERN_ALERT "__page_cache_alloc: "
 			//				"before alloc_pages from hetero \n");
-			page = get_hetero_io_page(NULL);
-		    //page = hetero_getnxt_page(false);
-			if(page) {
-			    /*if(PageLocked(page)){
-    	    		unlock_page(page);
-    			}
-				if(PageSwapBacked(page)){
-					 ClearPageSwapCache(page);
-				}*/
+			//page = get_hetero_io_page(NULL);
+			page = hetero_alloc_hetero(GFP_PERSISTENCE, 0, 0);
+			if(page)
 				return page;
-			}
 		}	
 #endif
 	return alloc_pages(gfp, 0);

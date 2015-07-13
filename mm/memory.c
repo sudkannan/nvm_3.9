@@ -3419,27 +3419,31 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
-#if 0
+#if 1
 	if(current && current->heteroflag == PF_HETEROMEM){
-
+#if 1
        page = NULL;
-       page = hetero_getnxt_page(false);
-       if(!page){
-           page = alloc_zeroed_user_highpage_movable(vma, address);
-           if(!page) {
-               goto oom;
-           }
-       }else {
-           set_bit(PG_hetero, &page->flags);
-           page->nvdirty = PAGE_MIGRATED;
-       }
-	}else
+       //page = hetero_getnxt_page(false);
+	   //page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
+	   page = hetero_alloc_hetero(GFP_PERSISTENCE, 0, 0);
+	   //page = alloc_zeroed_user_highpage_movable(vma, address);
+	   if(page){
+
+		    if(page->nvdirty == PAGE_MIGRATED){
+			    clear_user_highpage(page, address);
+    	       //set_bit(PG_hetero, &page->flags);
+        	   page->nvdirty = PAGE_MIGRATED;
+			}
+		   goto setpageupdate;
+		}
 #endif
-	{
-		page = alloc_zeroed_user_highpage_movable(vma, address);
-		if (!page)
-			goto oom;
 	}
+#endif
+	page = alloc_zeroed_user_highpage_movable(vma, address);
+	if (!page)
+		goto oom;
+
+setpageupdate:
 	__SetPageUptodate(page);
 
 	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
@@ -4855,16 +4859,16 @@ write_fault:
 		goto oom;
 
         page = NULL;
-		//page = hetero_getnxt_page(false);
-		page = nv_alloc_page_numa(vma);
+		page = hetero_getnxt_page(false);
+		//page = nv_alloc_page_numa(vma);
 		if(!page){
 			page = alloc_zeroed_user_highpage_movable(vma, address);
 			if(!page) {	
 				goto oom;
 			}
 		}else {
-			set_bit(PG_hetero, &page->flags);
-			page->nvdirty = PAGE_MIGRATED;	
+			//set_bit(PG_hetero, &page->flags);
+			//page->nvdirty = PAGE_MIGRATED;	
 			page_reuse=1;
 		}
 #if 0
@@ -5293,7 +5297,8 @@ struct page* get_hetero_io_page(struct vm_area_struct *vma ) {
 #ifdef _NV_LOCKS
     spin_lock(&nvpagelock);
 #endif
-    page = hetero_getnxt_page(false);
+    //page = hetero_getnxt_io_page(false);
+	page = hetero_alloc_hetero(GFP_PERSISTENCE, 0, 0);
     if(!page){
         goto getnvpage_io_err;
     }

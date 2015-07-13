@@ -607,13 +607,27 @@ static inline void __free_one_page(struct page *page,
 		buddy_idx = __find_buddy_index(combined_idx, order + 1);
 		higher_buddy = higher_page + (buddy_idx - combined_idx);
 		if (page_is_buddy(higher_page, higher_buddy, order + 1)) {
+
+			if(page->nvdirty == PAGE_MIGRATED) {
+				//printk(KERN_ALERT "free_one_page: in order < MAX_ORDER-2 "
+				//"order % u migratetype %u \n", order, migratetype);
+				//order = 0;
+				migratetype= MIGRATE_HETERO;
+			}
 			list_add_tail(&page->lru,
 				&zone->free_area[order].free_list[migratetype]);
+
 			goto out;
 		}
 	}
-
+	if(page->nvdirty == PAGE_MIGRATED) {
+		/*printk(KERN_ALERT "free_one_page: order % u "
+				"migratetype %u \n", order, migratetype);*/
+		//order = 0;
+		migratetype= MIGRATE_HETERO;
+	}
 	list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
+
 out:
 	zone->free_area[order].nr_free++;
 }
@@ -847,9 +861,18 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	unsigned long flags;
 	int migratetype;
 
+#if 1
+    if(page->nvdirty == PAGE_MIGRATED) {
+        set_pageblock_migratetype(page, MIGRATE_HETERO);
+    }
+#endif
 	if (!free_pages_prepare(page, order))
 		return;
-
+#if 1
+    if(page->nvdirty == PAGE_MIGRATED) {
+        set_pageblock_migratetype(page, MIGRATE_HETERO);
+    }
+#endif
 	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
 	migratetype = get_pageblock_migratetype(page);
@@ -2951,6 +2974,11 @@ EXPORT_SYMBOL(get_zeroed_page);
 void __free_pages(struct page *page, unsigned int order)
 {
 	if (put_page_testzero(page)) {
+
+		if(page->nvdirty == PAGE_MIGRATED) {
+			order = 0;
+		}
+
 		if (order == 0)
 			free_hot_cold_page(page, 0);
 		else
@@ -6503,9 +6531,10 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
             zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET,
             preferred_zone, migratetype);
 
-	//if(!page) {
-	//	printk(KERN_ALERT "get_page_from_freelist failed \n");
-	//}
+	if(!page) {
+		//printk(KERN_ALERT "get_page_from_freelist failed \n");
+		return NULL;
+	}
 	//if(page && page->nvdirty != PAGE_MIGRATED) {
 	//	printk(KERN_ALERT "get_page_from_freelist page not PAGE_MIGRATED \n");
 	//}
@@ -6513,6 +6542,7 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
         page = __alloc_pages_slowpath(gfp_mask, order,
                 zonelist, high_zoneidx, nodemask,
                 preferred_zone, migratetype);
+
 
     trace_mm_page_alloc(page, order, gfp_mask, migratetype);
     return page;

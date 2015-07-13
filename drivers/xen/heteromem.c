@@ -104,6 +104,8 @@ enum bp_state {
 
 
 spinlock_t heterolock;
+spinlock_t hetero_aloc_lock;
+
 static DEFINE_MUTEX(heteromem_mutex);
 struct heteromem_stats heteromem_stats;
 EXPORT_SYMBOL_GPL(heteromem_stats);
@@ -1053,12 +1055,44 @@ struct page* get_from_usedpage_list() {
 
 /*HETERO MEMORY changes*/
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
+struct page *hetero_alloc_hetero(gfp_t gfp, int order, int node)
+{
+	struct page *page;
+	unsigned long pfn;
+
+	page = alloc_pages_nvram(node, gfp, 0);
+    if(!page) {
+		goto pagemisses;
+	}
+	if(page->nvdirty != PAGE_MIGRATED)
+		goto fastpagemisses;
+hetero_nxt_page:
+	nr_fast_inuse_pages++;
+	nr_used_lst_pgcnt++;
+	if(nr_used_lst_pgcnt % 100000 == 0)
+		printk("hetero_getnxt_page: used pagecount %u \n",nr_used_lst_pgcnt); 
+	return page;
+
+fastpagemisses:	 /*got page but not fast page*/
+	hetero_page_miss++;
+	return page;
+pagemisses:
+	hetero_page_miss++;
+	return NULL;
+}
+EXPORT_SYMBOL(hetero_alloc_hetero);
+
+
+
+
+/*HETERO MEMORY changes*/
+/* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
 struct page *hetero_getnxt_page(bool prefer_highmem)
 {
 	struct page *page;
 	unsigned long pfn;
 
-	spin_lock(&heterolock);
+	//spin_lock(&hetero_aloc_lock);
 
 	/*if(nr_fast_inuse_pages >= max_fastmem_pages){
 		spin_unlock(&heterolock);
@@ -1069,7 +1103,6 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 	/*HETERO MEMORY changes*/
 	page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
     if(!page) {
-		spin_unlock(&heterolock);
 		goto pagemisses;
 	}
 
@@ -1087,16 +1120,17 @@ hetero_nxt_page:
 	if(nr_used_lst_pgcnt % 100000 == 0)
 		printk("hetero_getnxt_page: used pagecount %u \n",nr_used_lst_pgcnt); 
 
-	spin_unlock(&heterolock);	
+	//spin_lock(&hetero_aloc_lock);
 	return page;
 
 fastpagemisses:	 /*got page but not fast page*/
 	//printk("hetero_getnxt_page: fastpagemisses %u \n",hetero_page_miss);
-	spin_unlock(&heterolock);
+	//spin_lock(&hetero_aloc_lock);
 	hetero_page_miss++;
 	return page;
 
 pagemisses:
+	//spin_lock(&hetero_aloc_lock);
 	hetero_page_miss++;
 	return NULL;
 }
@@ -1203,45 +1237,36 @@ struct page *hetero_getnxt_io_page(bool prefer_highmem)
 
 	spin_lock(&heterolock);
 
-	if(nr_fast_inuse_pages >= max_fastmem_pages){
+	/*if(nr_fast_inuse_pages >= max_fastmem_pages){
 		spin_unlock(&heterolock);
 		goto iopagemisses;		
-	}
-
-	page = alloc_io_page(prefer_highmem);
+	}*/
+    /*HETERO MEMORY changes*/
+    page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
     if(!page) {
-		page = get_from_usedpage_list();
-		if(page){
-			//clear_page(page);
-			goto hetero_getnxt_io_page;
-		}
-		spin_unlock(&heterolock);
-		goto iopagemisses;
-	}
+        spin_unlock(&heterolock);
+        goto iopagemisses;
+    }
 
-#ifndef HETERO_JIT	
-	//add to used list of pages
-	//list_add(&page->lru, &hetero_used_anon_pgs);
-	//init_page_count(page);
-#endif	
+	if(page->nvdirty != PAGE_MIGRATED) 
+		goto fastiopagemiss;
 
 hetero_getnxt_io_page:
 	nr_fast_inuse_pages++;
 	nr_fast_io_pages++;
 
-	init_page_count(page);
-	list_del(&page->lru);
-
 	if(ready_lst_pgcnt)
 		ready_lst_pgcnt--;
 
 	nr_used_lst_pgcnt++;
-
 	spin_unlock(&heterolock);	
-
 	if(nr_used_lst_pgcnt % 100000 == 0)
 		printk("hetero_getnxt_page: used pagecount %u \n",nr_used_lst_pgcnt); 
 
+	return page;
+
+fastiopagemiss:
+	spin_unlock(&heterolock);
 	return page;
 
 iopagemisses:
@@ -1390,6 +1415,65 @@ int heteromem_app_enter(unsigned long testarg,
 EXPORT_SYMBOL(heteromem_app_enter);
 
 
+/* experimental*/
+/* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
+struct page *hetero_getnxt_io_page_old(bool prefer_highmem)
+{
+	struct page *page=NULL;
+	unsigned long pfn;
+
+	spin_lock(&heterolock);
+
+	if(nr_fast_inuse_pages >= max_fastmem_pages){
+		spin_unlock(&heterolock);
+		goto iopagemisses;		
+	}
+
+#if 1
+	page = alloc_io_page(prefer_highmem);
+    if(!page) {
+		page = get_from_usedpage_list();
+		if(page){
+			//clear_page(page);
+			goto hetero_getnxt_io_page;
+		}
+		spin_unlock(&heterolock);
+		goto iopagemisses;
+	}
+#endif
+
+#ifndef HETERO_JIT	
+	//add to used list of pages
+	//list_add(&page->lru, &hetero_used_anon_pgs);
+	//init_page_count(page);
+#endif	
+
+hetero_getnxt_io_page:
+	nr_fast_inuse_pages++;
+	nr_fast_io_pages++;
+
+#if 1
+	init_page_count(page);
+	list_del(&page->lru);
+#endif
+
+	if(ready_lst_pgcnt)
+		ready_lst_pgcnt--;
+
+	nr_used_lst_pgcnt++;
+
+	spin_unlock(&heterolock);	
+
+	if(nr_used_lst_pgcnt % 100000 == 0)
+		printk("hetero_getnxt_page: used pagecount %u \n",nr_used_lst_pgcnt); 
+
+	return page;
+
+iopagemisses:
+	hetero_page_miss++;
+	return NULL;
+}
+EXPORT_SYMBOL(hetero_getnxt_io_page_old);
 
 
 /* DONT NEED HETEROMEM AS A DRIVER FOR NOW*/
