@@ -338,9 +338,16 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
             f = (void *)(((unsigned long)curr_base_vaddr) + offset);
 
             if (f->mfn == 0) {
+
+				 /*curr_base_vaddr = vaddrs[0];
+				 offset = 0;
+				 f = (void *)(((unsigned long)curr_base_vaddr) + offset);
+				 f->mfn = 0;*/
+
                 //*hotcnt = pidx * frames_ppage + fidx;
                	//printk("hotcnt = %u fidx=%u pidx=%u "
 				//		"frames_ppage=%u\n", *hotcnt, fidx, pidx, frames_ppage);
+
                 return frame_list;
             }
 			frame_list[pidx * frames_ppage + fidx] = f->mfn;

@@ -3,6 +3,8 @@
 
 #include <linux/errno.h>
 
+//#define RANDOMHETERO
+
 #ifdef __KERNEL__
 
 #include <linux/gfp.h>

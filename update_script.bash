@@ -10,8 +10,8 @@
 
 CC=/usr/lib/ccache/bin/gcc make -j15 &>compile.out
 CC=/usr/lib/ccache/bin/gcc make bzImage -j15 &>>compile.out
-CC=/usr/lib/ccache/bin/gcc make  modules -j15
-CC=/usr/lib/ccache/bin/gcc make  modules_install -j15
+#CC=/usr/lib/ccache/bin/gcc make  modules -j15
+#CC=/usr/lib/ccache/bin/gcc make  modules_install -j15
 
  y="3.9.0+"	
    if [[ x$ == x ]];
@@ -28,5 +28,5 @@ echo Now edit menu.lst or run /sbin/update-grub
 
 grep -r "warning:" compile.out &> warnings.out
 grep -r "error:" compile.out &> errors.out
-./copy.sh
+#./copy.sh
 #sudo reboot

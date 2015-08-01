@@ -56,7 +56,11 @@ extern void migrate_page_copy(struct page *newpage, struct page *page);
 extern int migrate_huge_page_move_mapping(struct address_space *mapping,
 				  struct page *newpage, struct page *page);
 extern struct list_head* get_hetero_list(unsigned int *nrpages);
+
+extern int release_inactive_fastmem(struct list_head *pagelist,int maxattempt);
 #else
+
+static int release_inactive_fastmem(struct list_head *pagelist,int maxattempt);
 
 static struct list_head* get_hetero_list(unsigned int *nrpages);
 

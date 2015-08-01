@@ -37,6 +37,13 @@ int heteromem_init(int idx, unsigned long start, unsigned long size);
 struct page *hetero_getnxt_page(bool prefer_highmem);
 struct page *hetero_getnxt_io_page(bool prefer_highmem);
 struct page *hetero_alloc_hetero(gfp_t gfp, int order, int node);
+struct page *hetero_alloc_migrate(gfp_t gfp, int order, int node);
+struct page *hetero_alloc_IO(gfp_t gfp, int order, int node);
+
+void hetero_free_hetero();
+void increment_hetero_alloc_hit();
+void increment_hetero_alloc_miss();
+
 int send_hotpage_skiplist();
 xen_pfn_t *get_hotpage_list(unsigned int *hotcnt);
 int is_hetero_hot_page(struct page *page);

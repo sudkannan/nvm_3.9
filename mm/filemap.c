@@ -530,17 +530,18 @@ struct page *__page_cache_alloc(gfp_t gfp)
 		return page;
 	}
 
-//#if 0
 #ifdef HETEROMEM
+//#if 0
 		if(current && current->heteroflag == PF_HETEROMEM){
 			//printk(KERN_ALERT "__page_cache_alloc: "
 			//				"before alloc_pages from hetero \n");
 			//page = get_hetero_io_page(NULL);
-			page = hetero_alloc_hetero(GFP_PERSISTENCE, 0, 0);
+			page = hetero_alloc_IO(GFP_HIGHUSER_MOVABLE |__GFP_ZERO, 0, 0);
 			if(page)
 				return page;
 		}	
 #endif
+
 	return alloc_pages(gfp, 0);
 }
 EXPORT_SYMBOL(__page_cache_alloc);
@@ -1652,15 +1653,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	pgoff_t size;
 	int ret = 0;
 
-//#ifdef HETEROMEM
-#if 0
-        if(current && current->heteroflag == PF_HETEROMEM){
-            printk(KERN_ALERT "mm/filemap.c, Entering filemap_fault \n");
-            //page = getnvpage(NULL);
-        }
-        //if(!page)
-#endif
-
 	size = (i_size_read(inode) + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 	if (offset >= size)
 		return VM_FAULT_SIGBUS;
@@ -1671,12 +1663,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	page = find_get_page(mapping, offset);
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 
-//#ifdef HETEROMEM
-#if 0
-	   if(current && current->heteroflag == PF_HETEROMEM){
-    	    printk(KERN_ALERT "found find_get_page cache \n");
-    	}
-#endif
 		/*
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.
@@ -1684,11 +1670,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		do_async_mmap_readahead(vma, ra, file, page, offset);
 	} else if (!page) {
 
-#ifdef HETEROMEM_DISABLE
-	    if(current && current->mm && current->mm->def_flags && VM_HETERO){
-    	    printk(KERN_ALERT "not found find_get_page cache \n");
-    	}
-#endif
 		/* No page in the page cache at all */
 		do_sync_mmap_readahead(vma, ra, file, offset);
 		count_vm_event(PGMAJFAULT);
@@ -1735,12 +1716,6 @@ retry_find:
 	return ret | VM_FAULT_LOCKED;
 
 no_cached_page:
-
-#ifdef HETEROMEM
-	    //if(current && current->heteroflag == PF_HETEROMEM){
-    	  //  printk(KERN_ALERT "In no_cached_page: \n");
-    	//}
-#endif
 
 	/*
 	 * We're only likely to ever get here if MADV_RANDOM is in

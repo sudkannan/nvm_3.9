@@ -82,11 +82,12 @@ Also all code related to hotplug has been removed */
 #define XENMEMF_hetero_mem_request  (1<<18)
 #define XENMEMF_hetero_stop_hotpage_scan (1<<19)
 
-#define MAX_HOT_MFN 128000
+#define MAX_HOT_MFN 32000
 #define MAX_MIGRATE 128000
 //#define HETERO_JIT
 #define HETEROMIGRATE 111
-#define READ_PERF_CNTRS
+//#define READ_PERF_CNTRS 
+#define DEFAULT_XEN_SCAN_FREQ 100000
 
 /*
  * heteromem_process() state:
@@ -147,15 +148,24 @@ static unsigned int mfnmatchcnt;
 
 /*app exit flags*/
 static unsigned int appexited;
-static unsigned int hetero_page_miss;
+static unsigned int nr_hetero_page_miss;
 extern unsigned int nr_migrate_success;
 static unsigned int max_fastmem_pages;
 static unsigned int nr_fast_inuse_pages;
 static unsigned int nr_fast_io_pages;
 static unsigned int nr_fast_io_used_pages;
 static unsigned int nr_reuse_pages;
+static unsigned int nr_fast_migrate_pages;
+static unsigned int nr_fast_migrate_miss;
+static unsigned int nr_hetero_io_miss;
 
 
+static unsigned int nr_hot_scan_freq;
+static unsigned int nr_hot_scan_limit;
+static unsigned int nr_hot_shrink_freq;
+static unsigned int nr_usesharedmem;
+static unsigned int nr_cachethresh;
+static unsigned int nr_firstmiss;
 
 /* Main work function, always executed in process context. */
 static void heteromem_process(struct work_struct *work);
@@ -389,6 +399,7 @@ static enum bp_state increase_reservation(unsigned long nr_pages, struct page **
 		/*HETERO MEMORY changes*/
 		page->nvdirty = PAGE_MIGRATED;
 		__free_page(page);
+		//list_add(&page->nvlist, &hetero_ready_lst_pgs);
 
 		/* Part of hetero memory changes returning page to allocator 
 		SetPageReserved(page);	
@@ -1034,7 +1045,29 @@ void debug_heteroused_page(void)
 	}
 }
 
+void print_stats(){
 
+	printk(KERN_ALERT "used pagecount %u "
+    "hetero_miss %u "
+    "max fastmem %u "
+    "fast_inuse %u "
+    "reused %u "
+    "fast_io %u "
+    "fast_io_used %u "
+    "fast_migrate_used %u "
+    "fast_migrate_miss %u "
+	"IO hetero miss %u\n",
+	nr_used_lst_pgcnt,
+    nr_hetero_page_miss,
+    max_fastmem_pages,
+    nr_fast_inuse_pages,
+    nr_reuse_pages,
+    nr_fast_io_pages,
+    nr_fast_io_used_pages,
+    nr_fast_migrate_pages,
+    nr_fast_migrate_miss,
+	nr_hetero_io_miss);
+}
 
 struct page* get_from_usedpage_list() { 
 
@@ -1052,6 +1085,73 @@ struct page* get_from_usedpage_list() {
 	  return page; 	
 }
 
+void hetero_free_hetero(){
+
+	if(nr_fast_inuse_pages)
+		nr_fast_inuse_pages--;
+}
+EXPORT_SYMBOL(hetero_free_hetero);
+
+void increment_hetero_alloc(){
+
+}
+
+/*HETERO MEMORY changes*/
+/* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
+struct page *hetero_alloc_IO(gfp_t gfp, int order, int node)
+{
+
+	//return NULL;
+	return hetero_alloc_hetero(gfp, order, node);
+
+#if 0	
+	struct page *page;
+	unsigned long pfn;
+
+   if(nr_fast_inuse_pages > max_fastmem_pages)
+		goto pagemisses;
+
+	page = alloc_pages_nvram(node, gfp, 0);
+    if(!page) {
+		goto pagemisses;
+	}
+	if(page->nvdirty != PAGE_MIGRATED)
+		goto fastpagemisses;
+
+	clear_user_highpage(page,0);
+	page->nvdirty = PAGE_MIGRATED;
+
+hetero_nxt_page:
+	nr_fast_inuse_pages++;
+	nr_used_lst_pgcnt++;
+	if(nr_used_lst_pgcnt % 10000 == 0)
+		print_stats();
+
+	return page;
+
+fastpagemisses:	 /*got page but not fast page*/
+	nr_hetero_page_miss++;
+	nr_hetero_io_miss++;
+	/*if(nr_hetero_io_miss % 100000 == 0)
+		release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);*/
+
+	return page;
+pagemisses:
+	nr_hetero_page_miss++;
+	return NULL;
+#endif
+}
+EXPORT_SYMBOL(hetero_alloc_IO);
+
+void increment_hetero_alloc_hit(){
+	nr_used_lst_pgcnt++;
+}
+EXPORT_SYMBOL(increment_hetero_alloc_hit);
+
+void increment_hetero_alloc_miss(){
+	nr_hetero_page_miss++;
+}
+EXPORT_SYMBOL(increment_hetero_alloc_miss);
 
 /*HETERO MEMORY changes*/
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
@@ -1059,6 +1159,9 @@ struct page *hetero_alloc_hetero(gfp_t gfp, int order, int node)
 {
 	struct page *page;
 	unsigned long pfn;
+
+   if(nr_fast_inuse_pages > max_fastmem_pages)
+		goto pagemisses;
 
 	page = alloc_pages_nvram(node, gfp, 0);
     if(!page) {
@@ -1070,17 +1173,87 @@ hetero_nxt_page:
 	nr_fast_inuse_pages++;
 	nr_used_lst_pgcnt++;
 	if(nr_used_lst_pgcnt % 100000 == 0)
-		printk("hetero_getnxt_page: used pagecount %u \n",nr_used_lst_pgcnt); 
+		print_stats();
+
+	//clear_user_highpage(page,0);
+	//page->nvdirty = PAGE_MIGRATED;
+	//list_add(&page->nvlist, &hetero_ready_lst_pgs);
+	list_add_tail(&page->nvlist, &hetero_ready_lst_pgs);
+
 	return page;
 
 fastpagemisses:	 /*got page but not fast page*/
-	hetero_page_miss++;
+	nr_hetero_page_miss++;
+
+	if(!nr_firstmiss){
+		printk(KERN_ALERT "FIRST MISS, Changing migrate freq \n");
+		nr_firstmiss = 1;
+		perf_set_test_arg(nr_cachethresh, nr_hot_scan_freq, nr_hot_scan_limit, 
+				          nr_hot_shrink_freq, nr_usesharedmem);
+	}
+	if(nr_hetero_page_miss % 100000 == 0){
+		//printk(KERN_ALERT "invoking release_inactive_fastmem \n"); 
+		release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
+	}
+
 	return page;
 pagemisses:
-	hetero_page_miss++;
+	if(!nr_firstmiss){
+		printk(KERN_ALERT "FIRST MISS, Changing migrate freq \n");
+		nr_firstmiss = 1;
+		perf_set_test_arg(nr_cachethresh, nr_hot_scan_freq, nr_hot_scan_limit, 
+				          nr_hot_shrink_freq, nr_usesharedmem);
+	}
+	nr_hetero_page_miss++;
 	return NULL;
 }
 EXPORT_SYMBOL(hetero_alloc_hetero);
+
+/*HETERO MEMORY changes*/
+struct page *hetero_alloc_migrate(gfp_t gfp, int order, int node)
+{
+	struct page *page;
+	unsigned long pfn;
+
+	if(nr_fast_inuse_pages > max_fastmem_pages)
+		goto fastpagemisses;
+
+	page = alloc_pages_nvram(node, gfp, 0);
+    if(!page) {
+		goto pagemisses;
+	}
+	if(page->nvdirty != PAGE_MIGRATED)
+		goto fastpagemisses;
+hetero_nxt_page:
+	nr_fast_inuse_pages++;
+	nr_used_lst_pgcnt++;
+	nr_fast_migrate_pages++;
+
+	if(nr_used_lst_pgcnt % 100000 == 0)
+		printk("hetero_alloc_migrate: used pagecount %u "
+				"nr_fast_inuse_pages %u, "
+				"nr_fast_migrate_pages %u, " 
+				"nr_fast_migrate_miss %u\n",
+				nr_used_lst_pgcnt, nr_fast_inuse_pages, 
+				nr_fast_migrate_pages, nr_fast_migrate_miss);
+
+	return page;
+
+fastpagemisses:	 /*got page but not fast page*/
+	nr_hetero_page_miss++;
+	nr_fast_migrate_miss++;
+	release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
+	//return page;
+	//init_page_count(page);
+	// __free_page(page);	
+	return NULL;
+
+pagemisses:
+	nr_hetero_page_miss++;
+	nr_fast_migrate_miss++;
+	return NULL;
+}
+EXPORT_SYMBOL(hetero_alloc_migrate);
 
 
 
@@ -1124,14 +1297,14 @@ hetero_nxt_page:
 	return page;
 
 fastpagemisses:	 /*got page but not fast page*/
-	//printk("hetero_getnxt_page: fastpagemisses %u \n",hetero_page_miss);
+	//printk("hetero_getnxt_page: fastpagemisses %u \n",nr_hetero_page_miss);
 	//spin_lock(&hetero_aloc_lock);
-	hetero_page_miss++;
+	nr_hetero_page_miss++;
 	return page;
 
 pagemisses:
 	//spin_lock(&hetero_aloc_lock);
-	hetero_page_miss++;
+	nr_hetero_page_miss++;
 	return NULL;
 }
 EXPORT_SYMBOL(hetero_getnxt_page);
@@ -1202,7 +1375,7 @@ hetero_nxt_page:
 	return page;
 
 pagemisses:
-	hetero_page_miss++;
+	nr_hetero_page_miss++;
 	return NULL;
 }
 EXPORT_SYMBOL(hetero_getnxt_page_old);
@@ -1270,7 +1443,7 @@ fastiopagemiss:
 	return page;
 
 iopagemisses:
-	hetero_page_miss++;
+	nr_hetero_page_miss++;
 	return NULL;
 }
 EXPORT_SYMBOL(hetero_getnxt_io_page);
@@ -1356,21 +1529,9 @@ int heteromem_app_exit(void){
 		//print_perf_counters();
 		//reset_perf_counters();
 		appexited=1;
-		printk(KERN_ALERT "fastmem hetero_page_miss %u "
-			"hetero pages used %u " 
-			"max_fastmem_pages %u " 
-			"nr_fast_inuse_pages %u " 
-			"nr_reuse_pages %u "
-			"nr_fast_io_pages %u "
-			"nr_fast_io_used_pages %u\n",
-			hetero_page_miss,
-			nr_used_lst_pgcnt,
-			max_fastmem_pages, 
-			nr_fast_inuse_pages, 
-			nr_reuse_pages, 
-			nr_fast_io_pages, 
-			nr_fast_io_used_pages);
-	
+		perf_set_test_arg(nr_cachethresh,DEFAULT_XEN_SCAN_FREQ, nr_hot_scan_limit,
+					                          nr_hot_shrink_freq, nr_usesharedmem);
+		print_stats();
 	}
 }
 EXPORT_SYMBOL(heteromem_app_exit);
@@ -1388,28 +1549,30 @@ int heteromem_app_enter(unsigned long testarg,
 
 	appexited=0;
 	nr_used_lst_pgcnt = 0;
-	hetero_page_miss = 0;
+	nr_hetero_page_miss = 0;
 	nr_reuse_pages = 0;
     nr_fast_inuse_pages=0;
     nr_reuse_pages=0;
  	nr_fast_io_pages=0;
 	nr_fast_io_used_pages = 0;
+	nr_fast_migrate_pages = 0;
+	nr_fast_migrate_miss = 0;
+	nr_firstmiss = 0;
 	max_fastmem_pages = maxfastmempgs;
 
-#if 0
-	perf_set_test_arg(testarg, hot_scan_freq, hot_scan_limit, 
+    nr_hot_scan_freq = hot_scan_freq; 
+    nr_hot_scan_limit = hot_scan_limit;
+    nr_hot_shrink_freq = hot_shrink_freq;
+    nr_usesharedmem = usesharedmem;
+	nr_cachethresh = testarg;
+
+#if 1
+	perf_set_test_arg(testarg, DEFAULT_XEN_SCAN_FREQ, hot_scan_limit, 
+	//perf_set_test_arg(testarg, nr_hot_scan_freq, hot_scan_limit,
 						hot_shrink_freq, usesharedmem);
 #endif
 
-	printk(KERN_ALERT "fastmem hetero_page_miss %u "
-			"hetero pages used %u " 
-			"max_fastmem_pages %u " 
-			"nr_fast_inuse_pages %u \n",
-			hetero_page_miss,
-			nr_used_lst_pgcnt,
-			max_fastmem_pages, 
-			nr_fast_inuse_pages);
-
+	print_stats();	
 	//reset_perf_counters();
 }
 EXPORT_SYMBOL(heteromem_app_enter);
@@ -1470,7 +1633,7 @@ hetero_getnxt_io_page:
 	return page;
 
 iopagemisses:
-	hetero_page_miss++;
+	nr_hetero_page_miss++;
 	return NULL;
 }
 EXPORT_SYMBOL(hetero_getnxt_io_page_old);

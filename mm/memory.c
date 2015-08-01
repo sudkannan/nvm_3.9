@@ -3419,26 +3419,38 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
-#if 1
-	if(current && current->heteroflag == PF_HETEROMEM){
-#if 1
-       page = NULL;
-       //page = hetero_getnxt_page(false);
-	   //page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
-	   page = hetero_alloc_hetero(GFP_PERSISTENCE, 0, 0);
-	   //page = alloc_zeroed_user_highpage_movable(vma, address);
-	   if(page){
-
-		    if(page->nvdirty == PAGE_MIGRATED){
-			    clear_user_highpage(page, address);
-    	       //set_bit(PG_hetero, &page->flags);
-        	   page->nvdirty = PAGE_MIGRATED;
-			}
-		   goto setpageupdate;
+#ifdef RANDOMHETERO
+	page = alloc_zeroed_user_highpage_movable(vma, address);
+	if(page){
+		if(page->nvdirty == PAGE_MIGRATED){
+			increment_hetero_alloc_hit();
+		}else{
+			increment_hetero_alloc_miss();
 		}
-#endif
+		clear_user_highpage(page, address);
+		page->nvdirty = PAGE_MIGRATED;
+		goto setpageupdate;
+	}else {
+		increment_hetero_alloc_miss();
 	}
 #endif
+
+#ifndef RANDOMHETERO	
+#ifdef HETEROMEM
+	if(current && current->heteroflag == PF_HETEROMEM){
+       page = NULL;
+	   page = hetero_alloc_hetero(GFP_HIGHUSER_MOVABLE |__GFP_ZERO, 0, 0);
+	   if(page){
+		    if(page->nvdirty == PAGE_MIGRATED){
+			    clear_user_highpage(page, address);
+				page->nvdirty = PAGE_MIGRATED;
+			}
+			goto setpageupdate;
+		}
+	}
+#endif
+#endif
+
 	page = alloc_zeroed_user_highpage_movable(vma, address);
 	if (!page)
 		goto oom;
@@ -4013,22 +4025,15 @@ int handle_pte_fault(struct mm_struct *mm,
 						pte, pmd, flags, entry);
 			}
 
-             //NVRAM  changes 
-		     if ( vma->persist_flags == PERSIST_VMA_FLAG ) {
-#ifdef LOCAL_DEBUG_FLAG
-				printk("=======================================\n");
-    	        printk("handle_pte_fault: do_anonymous_nvmem_page \n");
+#ifdef RANDOMHETERO 	
+			return do_anonymous_page(mm, vma, address,pte, pmd, flags);
 #endif
+             //NVRAM  changes 
+		   if ( vma->persist_flags == PERSIST_VMA_FLAG ) {
         	    ret = do_anonymous_nvmem_page(mm, vma, address,
                                   		 pte, pmd, flags);     
-				//return do_anonymous_page_node(mm, vma, address,
-				//			 pte, pmd, flags);
-
-#ifdef LOCAL_DEBUG_FLAG
-				printk("=======================================\n");
-#endif
 				return ret;				
-		     }else {
+		    }else {
 				return do_anonymous_page(mm, vma, address,
 							 pte, pmd, flags);
 			}
@@ -4828,6 +4833,18 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return VM_FAULT_SIGBUS;
 	}
 
+
+	 /* Use the zero-page for reads */
+	 if (!(flags & FAULT_FLAG_WRITE)) {
+		 entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
+						 vma->vm_page_prot));
+		 page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+		 if (!pte_none(*page_table))
+			 goto unlock;
+		 goto setpte;
+	 }
+
+
 #if 0
     /* Use the zero-page for reads */
     if (!(flags & FAULT_FLAG_WRITE)) {
@@ -4859,7 +4876,8 @@ write_fault:
 		goto oom;
 
         page = NULL;
-		page = hetero_getnxt_page(false);
+		//page = hetero_getnxt_page(false);
+		page = hetero_alloc_hetero(GFP_PERSISTENCE, 0, 0);
 		//page = nv_alloc_page_numa(vma);
 		if(!page){
 			page = alloc_zeroed_user_highpage_movable(vma, address);
@@ -4868,9 +4886,12 @@ write_fault:
 			}
 		}else {
 			//set_bit(PG_hetero, &page->flags);
-			//page->nvdirty = PAGE_MIGRATED;	
+			page->nvdirty = PAGE_MIGRATED;	
 			page_reuse=1;
 		}
+
+		if(page->nvdirty == PAGE_MIGRATED)	
+			clear_user_highpage(page, address);
 #if 0
 		if(!vma->noPersist) {
 			//printk(KERN_ALERT "using persist vma \n");	
@@ -5302,6 +5323,7 @@ struct page* get_hetero_io_page(struct vm_area_struct *vma ) {
     if(!page){
         goto getnvpage_io_err;
     }
+
     //page->nvdirty = PAGE_MIGRATED;
     //set_bit(PG_hetero, &page->flags);
 #ifdef _NV_LOCKS

@@ -1264,11 +1264,19 @@ static inline struct page *alloc_slab_page(gfp_t flags, int node,
 
 //#ifdef HETEROMEM
 #if 0
-    /*HETERO MEMORY changes*/
+	struct page *page = NULL;
+
     if(current && current->heteroflag == PF_HETEROMEM) {
-        //printk(KERN_ALERT "alloc_slab_page called \n");
+       	printk(KERN_ALERT "alloc_slab_page called \n");
+
 		flags |= __GFP_NOTRACK;
-		return alloc_pages_nvram(node, flags, order);
+
+		//if (node == NUMA_NO_NODE)
+		page = hetero_alloc_hetero (flags, node, order);
+		if(page) 
+			return page;
+		else
+			return alloc_pages_exact_node(node, flags, order);
     }
 #endif
 

@@ -608,24 +608,29 @@ static inline void __free_one_page(struct page *page,
 		higher_buddy = higher_page + (buddy_idx - combined_idx);
 		if (page_is_buddy(higher_page, higher_buddy, order + 1)) {
 
+#ifndef RANDOMHETERO
 			if(page->nvdirty == PAGE_MIGRATED) {
 				//printk(KERN_ALERT "free_one_page: in order < MAX_ORDER-2 "
 				//"order % u migratetype %u \n", order, migratetype);
 				//order = 0;
 				migratetype= MIGRATE_HETERO;
 			}
+#endif	
 			list_add_tail(&page->lru,
 				&zone->free_area[order].free_list[migratetype]);
 
 			goto out;
 		}
 	}
+#ifndef RANDOMHETERO	
 	if(page->nvdirty == PAGE_MIGRATED) {
 		/*printk(KERN_ALERT "free_one_page: order % u "
 				"migratetype %u \n", order, migratetype);*/
 		//order = 0;
 		migratetype= MIGRATE_HETERO;
 	}
+#endif
+
 	list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
 
 out:
@@ -722,11 +727,6 @@ static void free_pcppages_bulk(struct zone *zone, int count,
 
 			page = list_entry(list->prev, struct page, lru);
 
-			//if(page->nvdirty == PAGE_MIGRATED) {
-				//printk(KERN_ALERT "free_pcppages_bulk: Hetero page, skip\n");
-				//continue;
-			//}
-			
 			/* must delete as __free_one_page list manipulates */
 			list_del(&page->lru);
 			mt = get_freepage_migratetype(page);
@@ -767,10 +767,12 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 	trace_mm_page_free(page, order);
 	kmemcheck_free_shadow(page, order);
 
+#ifndef RANDOMHETERO	
 #ifdef HETEROMEM
 	if(page->nvdirty == PAGE_MIGRATED){
 		heteropage=1;
 	}
+#endif
 #endif
 
 	if (PageAnon(page))
@@ -789,19 +791,23 @@ static bool free_pages_prepare(struct page *page, unsigned int order)
 					   PAGE_SIZE << order);
 	}
 
+#ifndef RANDOMHETERO
 #ifdef HETEROMEM
 	if(heteropage){
 		page->nvdirty = PAGE_MIGRATED;
 	}
 #endif
+#endif
 
 	arch_free_page(page, order);
 	kernel_map_pages(page, 1 << order, 0);
 
+#ifndef RANDOMHETERO
 #ifdef HETEROMEM
 	if(heteropage){
 		page->nvdirty = PAGE_MIGRATED;
 	}
+#endif
 #endif
 	return true;
 }
@@ -861,18 +867,26 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 	unsigned long flags;
 	int migratetype;
 
-#if 1
+#ifndef RANDOMHETERO	
+#ifdef HETEROMEM
     if(page->nvdirty == PAGE_MIGRATED) {
         set_pageblock_migratetype(page, MIGRATE_HETERO);
+		hetero_free_hetero();
     }
 #endif
+#endif
+
 	if (!free_pages_prepare(page, order))
 		return;
-#if 1
+
+#ifndef RANDOMHETERO	
+#ifdef HETEROMEM
     if(page->nvdirty == PAGE_MIGRATED) {
         set_pageblock_migratetype(page, MIGRATE_HETERO);
     }
 #endif
+#endif
+
 	local_irq_save(flags);
 	__count_vm_events(PGFREE, 1 << order);
 	migratetype = get_pageblock_migratetype(page);
@@ -992,10 +1006,6 @@ static inline int check_new_page(struct page *page)
 		(mem_cgroup_bad_page_check(page)))) {
 		//printk(KERN_ALERT "Bad page check_new_page \n");
 		
-		
-		//if(page->nvdirty == PAGE_MIGRATED)
-		//	return 0;
-
 		bad_page(page);
 		return 1;
 	}
@@ -1071,7 +1081,8 @@ static int fallbacks[MIGRATE_TYPES][4] = {
 #else
 	[MIGRATE_MOVABLE]     = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE,   MIGRATE_RESERVE },
 	/*HETERO MEMORY changes*/
-	[MIGRATE_HETERO]     = {MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE, MIGRATE_RESERVE, MIGRATE_HETERO},
+	[MIGRATE_HETERO]     = {MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE, MIGRATE_RESERVE, MIGRATE_HETERO},
+	//[MIGRATE_HETERO]     = {MIGRATE_HETERO},
 #endif
 	[MIGRATE_RESERVE]     = { MIGRATE_RESERVE }, /* Never used */
 #ifdef CONFIG_MEMORY_ISOLATION
@@ -1567,21 +1578,22 @@ void free_hot_cold_page(struct page *page, int cold)
 
 skip:
 	if (!free_pages_prepare(page, 0)) {
-		//if(page->nvdirty == PAGE_MIGRATED) {
-			//printk(KERN_ALERT "free_pages_prepare returning false \n");
-		//}
 		return;
 	}
 
-	/*HETERO MEMORY changes*/
-#if 1
+#ifndef RANDOMHETERO	
+/*HETERO MEMORY changes*/
+#ifdef HETEROMEM
 	if(page->nvdirty == PAGE_MIGRATED) {
 		set_pageblock_migratetype(page, MIGRATE_HETERO);
 		migratetype = get_pageblock_migratetype(page);
 		set_freepage_migratetype(page, migratetype);
 		//printk(KERN_ALERT "Adding to migratetype %u \n",migratetype);
+		hetero_free_hetero();
+
 	}else 
 #endif
+#endif	
 	{ 	
 	migratetype = get_pageblock_migratetype(page);
 	set_freepage_migratetype(page, migratetype);
@@ -2975,9 +2987,11 @@ void __free_pages(struct page *page, unsigned int order)
 {
 	if (put_page_testzero(page)) {
 
+#ifndef RANDOMHETERO	
 		if(page->nvdirty == PAGE_MIGRATED) {
 			order = 0;
 		}
+#endif
 
 		if (order == 0)
 			free_hot_cold_page(page, 0);
@@ -6531,19 +6545,12 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
             zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET,
             preferred_zone, migratetype);
 
-	if(!page) {
-		//printk(KERN_ALERT "get_page_from_freelist failed \n");
-		return NULL;
-	}
-	//if(page && page->nvdirty != PAGE_MIGRATED) {
-	//	printk(KERN_ALERT "get_page_from_freelist page not PAGE_MIGRATED \n");
-	//}
+#if 0
     if (unlikely(!page))
         page = __alloc_pages_slowpath(gfp_mask, order,
                 zonelist, high_zoneidx, nodemask,
                 preferred_zone, migratetype);
-
-
+#endif
     trace_mm_page_alloc(page, order, gfp_mask, migratetype);
     return page;
 }
