@@ -1081,7 +1081,7 @@ static int fallbacks[MIGRATE_TYPES][4] = {
 #else
 	[MIGRATE_MOVABLE]     = { MIGRATE_RECLAIMABLE, MIGRATE_UNMOVABLE,   MIGRATE_RESERVE },
 	/*HETERO MEMORY changes*/
-	[MIGRATE_HETERO]     = {MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE, MIGRATE_RESERVE, MIGRATE_HETERO},
+	[MIGRATE_HETERO]     = {MIGRATE_RECLAIMABLE, MIGRATE_MOVABLE, MIGRATE_HETERO, MIGRATE_RESERVE},
 	//[MIGRATE_HETERO]     = {MIGRATE_HETERO},
 #endif
 	[MIGRATE_RESERVE]     = { MIGRATE_RESERVE }, /* Never used */
@@ -6545,7 +6545,7 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
             zonelist, high_zoneidx, ALLOC_WMARK_LOW|ALLOC_CPUSET,
             preferred_zone, migratetype);
 
-#if 0
+#if 1
     if (unlikely(!page))
         page = __alloc_pages_slowpath(gfp_mask, order,
                 zonelist, high_zoneidx, nodemask,

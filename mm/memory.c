@@ -3423,12 +3423,12 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	page = alloc_zeroed_user_highpage_movable(vma, address);
 	if(page){
 		if(page->nvdirty == PAGE_MIGRATED){
-			increment_hetero_alloc_hit();
+			//increment_hetero_alloc_hit();
+			printk(KERN_ALERT "PAGE_MIGRATED \n");
+			clear_user_highpage(page, address);
 		}else{
 			increment_hetero_alloc_miss();
 		}
-		clear_user_highpage(page, address);
-		page->nvdirty = PAGE_MIGRATED;
 		goto setpageupdate;
 	}else {
 		increment_hetero_alloc_miss();
@@ -3444,6 +3444,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		    if(page->nvdirty == PAGE_MIGRATED){
 			    clear_user_highpage(page, address);
 				page->nvdirty = PAGE_MIGRATED;
+				hetero_add_to_nvlist(page);
 			}
 			goto setpageupdate;
 		}

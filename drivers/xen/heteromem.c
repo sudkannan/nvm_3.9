@@ -88,6 +88,12 @@ Also all code related to hotplug has been removed */
 #define HETEROMIGRATE 111
 //#define READ_PERF_CNTRS 
 #define DEFAULT_XEN_SCAN_FREQ 100000
+//#define RELEASE_INACTIVE
+//#define HEAP_IO_OD
+//#define HEAP_OD
+#define ENABLE_MIGRATION_ONLY
+#define ENABLE_MIGRATION_ARCH_HINTS
+
 
 /*
  * heteromem_process() state:
@@ -1100,9 +1106,12 @@ void increment_hetero_alloc(){
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
 struct page *hetero_alloc_IO(gfp_t gfp, int order, int node)
 {
-
+#ifdef HEAP_IO_OD
 	//return NULL;
 	return hetero_alloc_hetero(gfp, order, node);
+#else
+	return NULL;
+#endif
 
 #if 0	
 	struct page *page;
@@ -1149,9 +1158,21 @@ void increment_hetero_alloc_hit(){
 EXPORT_SYMBOL(increment_hetero_alloc_hit);
 
 void increment_hetero_alloc_miss(){
+#ifdef RANDOM
 	nr_hetero_page_miss++;
+#else
+    //if(nr_hetero_page_miss % 400000 == 0){
+      //printk(KERN_ALERT "invoking release_inactive_fastmem \n"); 
+     release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
+    //}
+#endif
 }
 EXPORT_SYMBOL(increment_hetero_alloc_miss);
+
+void hetero_add_to_nvlist(struct page *page){
+	list_add_tail(&page->nvlist, &hetero_ready_lst_pgs);
+}
+EXPORT_SYMBOL(hetero_add_to_nvlist);
 
 /*HETERO MEMORY changes*/
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
@@ -1159,6 +1180,11 @@ struct page *hetero_alloc_hetero(gfp_t gfp, int order, int node)
 {
 	struct page *page;
 	unsigned long pfn;
+
+#ifdef HEAP_OD
+#else
+    return NULL;
+#endif	
 
    if(nr_fast_inuse_pages > max_fastmem_pages)
 		goto pagemisses;
@@ -1185,19 +1211,32 @@ hetero_nxt_page:
 fastpagemisses:	 /*got page but not fast page*/
 	nr_hetero_page_miss++;
 
+#ifdef ENABLE_MIGRATION
 	if(!nr_firstmiss){
 		printk(KERN_ALERT "FIRST MISS, Changing migrate freq \n");
 		nr_firstmiss = 1;
 		perf_set_test_arg(nr_cachethresh, nr_hot_scan_freq, nr_hot_scan_limit, 
 				          nr_hot_shrink_freq, nr_usesharedmem);
 	}
+#endif
+
+#ifdef	RELEASE_INACTIVE
 	if(nr_hetero_page_miss % 100000 == 0){
 		//printk(KERN_ALERT "invoking release_inactive_fastmem \n"); 
 		release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
 	}
+#endif
 
 	return page;
 pagemisses:
+
+#ifdef	RELEASE_INACTIVE
+	if(nr_hetero_page_miss % 100000 == 0){
+		//printk(KERN_ALERT "invoking release_inactive_fastmem \n"); 
+		release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
+	}
+#endif
+
 	if(!nr_firstmiss){
 		printk(KERN_ALERT "FIRST MISS, Changing migrate freq \n");
 		nr_firstmiss = 1;
@@ -1242,7 +1281,7 @@ hetero_nxt_page:
 fastpagemisses:	 /*got page but not fast page*/
 	nr_hetero_page_miss++;
 	nr_fast_migrate_miss++;
-	release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
+	//release_inactive_fastmem(&hetero_ready_lst_pgs, max_fastmem_pages);
 	//return page;
 	//init_page_count(page);
 	// __free_page(page);	
@@ -1566,7 +1605,10 @@ int heteromem_app_enter(unsigned long testarg,
     nr_usesharedmem = usesharedmem;
 	nr_cachethresh = testarg;
 
-#if 1
+#ifdef ENABLE_MIGRATION_ONLY
+	perf_set_test_arg(testarg, nr_hot_scan_freq, hot_scan_limit,
+						hot_shrink_freq, usesharedmem);
+#else
 	perf_set_test_arg(testarg, DEFAULT_XEN_SCAN_FREQ, hot_scan_limit, 
 	//perf_set_test_arg(testarg, nr_hot_scan_freq, hot_scan_limit,
 						hot_shrink_freq, usesharedmem);
@@ -1682,3 +1724,4 @@ subsys_initcall(heteromem_init);
 
 MODULE_LICENSE("GPL");
 #endif
+

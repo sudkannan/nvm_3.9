@@ -39,6 +39,7 @@ struct page *hetero_getnxt_io_page(bool prefer_highmem);
 struct page *hetero_alloc_hetero(gfp_t gfp, int order, int node);
 struct page *hetero_alloc_migrate(gfp_t gfp, int order, int node);
 struct page *hetero_alloc_IO(gfp_t gfp, int order, int node);
+void hetero_add_to_nvlist(struct page *page);
 
 void hetero_free_hetero();
 void increment_hetero_alloc_hit();
