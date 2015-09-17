@@ -111,6 +111,7 @@ static struct page *new_slowpage(
 //#define HETERODEBUG
 unsigned int nr_migrate_success;
 unsigned int nr_curr_migrate_success;
+unsigned int nr_reclaim_success;
 unsigned int nr_migrate_attempted;
 unsigned int nr_page_freed;
 unsigned int nr_alloc_fail;
@@ -993,6 +994,7 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	int rc = 0;
 	int *result = NULL;
 	struct page *newpage;
+	int newhetmepage=0;
 
 
 	newpage = get_new_page(page, private, &result);
@@ -1002,12 +1004,9 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	}
 	//return -ENOMEM;
 
-	/*if(newpage->nvdirty != PAGE_MIGRATED){
-		//free_page(newpage);
-		//nr_alloc_fail++;
-		//goto out;
-		return -ENOMEM;
-	}*/
+	if(newpage->nvdirty == PAGE_MIGRATED){
+		newhetmepage = 1;
+	}
 
 	if (page_count(page) == 1) {
 		/* page was freed from under us. So we are done. */
@@ -1022,6 +1021,13 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	rc = __unmap_and_move(page, newpage, force, mode);
 
 	if (unlikely(rc == MIGRATEPAGE_BALLOON_SUCCESS)) {
+
+		if(newhetmepage){
+       		 printk(KERN_ALERT "In balloon page Setting page to migrated \n");
+       		 newpage->nvdirty = PAGE_MIGRATED;
+        	 hetero_add_to_nvlist(newpage);
+    	}
+		
 		/*
 		 * A ballooned page has been migrated already.
 		 * Now, it's the time to wrap-up counters,
@@ -1034,6 +1040,13 @@ static int unmap_and_move(new_page_t get_new_page, unsigned long private,
 	}
 out:
 	if (rc != -EAGAIN) {
+
+		if(newhetmepage){
+       		 //printk(KERN_ALERT "unmap_move before (rc != -EAGAIN)\n");
+       		 newpage->nvdirty = PAGE_MIGRATED;
+        	 //hetero_add_to_nvlist(newpage);
+    	}
+
 		/*
 		 * A page that has been migrated has all references
 		 * removed and will be freed. A page that has not been
@@ -1048,6 +1061,13 @@ out:
 		dec_zone_page_state(page, NR_ISOLATED_ANON +
 				page_is_file_cache(page));
 		putback_lru_page(page);
+
+		if(newhetmepage){
+       		 //printk(KERN_ALERT "unmap_move before (rc != -EAGAIN)\n");
+       		 newpage->nvdirty = PAGE_MIGRATED;
+        	 hetero_add_to_nvlist(newpage);
+    	}
+
 	}
 
 	//if (PageReserved(newpage))
@@ -1059,9 +1079,23 @@ out:
 	 */
 	//if (PageReserved(newpage))
 	//	ClearPageReserved(newpage);
+	//
+	//
+	if(newhetmepage){
+		//printk(KERN_ALERT "Setting page to migrated \n");
+		newpage->nvdirty = PAGE_MIGRATED;
+		//hetero_add_to_nvlist(newpage);	
+    }
 
-	putback_lru_page(newpage);
-	//newpage->nvdirty = PAGE_MIGRATED;
+
+	if(newhetmepage){
+		//printk(KERN_ALERT "Adding pages to nvlist \n");
+		newpage->nvdirty = PAGE_MIGRATED;
+		hetero_add_to_nvlist(newpage);	
+    }
+	{
+		putback_lru_page(newpage);
+	}
 
 	if (result) {
 		if (rc)
@@ -1314,7 +1348,7 @@ int migrate_nearmem_pages(struct list_head *from, new_page_t get_new_page,
 	if (!swapwrite)
 		current->flags |= PF_SWAPWRITE;
 
-	for(pass = 0; pass < 1 && retry; pass++) {
+	for(pass = 0; pass < 2 && retry; pass++) {
 		retry = 0;
 
 		list_for_each_entry_safe(page, page2, from, lru) {
@@ -1348,11 +1382,14 @@ int migrate_nearmem_pages(struct list_head *from, new_page_t get_new_page,
 				nr_succeeded++;
 				nr_migrate_success++;
 				nr_curr_migrate_success++;
+				nr_reclaim_success++;
 				inc_zone_page_state(page, NUMA_MIGRATED_FROM);
 				if(page){
-					list_del(&page->nvlist);
+					//list_del(&page->nvlist);
+					list_del(&page->lru);
+					//__free_page(page);
 					/*LRU list*/
-					page->nvpgoff = 0;
+					//page->nvpgoff = 0;
 				}
 				break;
 
@@ -1466,7 +1503,7 @@ int my_migrate_pages(struct list_head *from, new_page_t get_new_page,
 out:
 	if (nr_succeeded) {
 		count_vm_events(PGMIGRATE_SUCCESS, nr_succeeded);
-		printk( "nr_succeeded migration %u \n", nr_succeeded);
+		//printk( "nr_succeeded migration %u \n", nr_succeeded);
 		//inc_zone_page_state(page, NUMA_MIGRATED_FROM);
 	}
 	if (nr_failed) {
@@ -1580,13 +1617,14 @@ static struct page *new_page_node(struct page *p, unsigned long private,
 	}
 #else
 	//page = hetero_getnxt_page(false);
-	page = hetero_alloc_migrate(GFP_HIGHUSER, 0, 0);
+	page = hetero_alloc_migrate(GFP_HIGHUSER_MOVABLE |__GFP_ZERO, 0, 0);
 	if(!page){
 		//printk(KERN_ALERT "new_page_node: getting heteropage FAILED \n");
         return NULL;
 	}else{
 		//page->flags = page->flags | PG_nvram;
 		//set_bit(PG_hetero, &page->flags);
+		hetero_add_to_nvlist(page);
 	} 
 #endif
 	return page;
@@ -3569,8 +3607,8 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag,
   	  	}
 		spin_unlock(&migrate_lock);
 	}
-	if(nr_migrate_success)
-	printk("nr_migrate_success: %u \n",nr_migrate_success);
+	//if(nr_migrate_success)
+	//printk("nr_migrate_success: %u \n",nr_migrate_success);
 
 	/*if((nr_migrate_success % 10 == 0) || 
 			(nr_migrate_success % 2 == 0)) //||nr_migrate_attempted || nr_migrate_failed)
@@ -4013,6 +4051,96 @@ out:
 		}
 #endif
 
+
+static int migrate_lru_pages(struct page *page, void *private, int flags)
+{
+	int page_was_unlocked=0;
+    int err = 0;
+	struct task_struct *task = current;
+	struct mm_struct *mm;
+	
+	if (!page){
+		nr_invalid_page++;
+		return -1;
+	}
+
+	if(task)
+		mm = task->mm;
+
+	if(mm)
+	down_read(&mm->mmap_sem);
+
+	//printk(KERN_ALERT "migrate_lru_pages called \n");
+
+	err = PTR_ERR(page);
+	if (IS_ERR(page)) {
+		nr_invalid_page++;
+		goto err_migration;
+   	}
+
+	/*
+	 * vm_normal_page() filters out zero pages, but there might
+	 * still be PageReserved pages to skip, perhaps in a VDSO.
+	 */
+	//if (PageReserved(page)){
+	//	nr_invalid_page++;
+	//	return -1;
+	//}
+
+	//if(page_is_file_cache(page))
+	//	return -1;
+
+	//if(!page_count(page))
+	//	return -1;
+
+	//err = isolate_lru_page(page);
+	//if(err)
+	//	return -1;
+
+	 //print_all_conversion(vma, page);
+	 //if(page->nvdirty == PAGE_MIGRATED) {
+	//	nr_dup_hot_page++;  
+	//	return -1;
+	  //}	
+
+	 ///*page has been already added to the dirty list*/
+	 //Set only if page is migrated in my_migrate_pages.
+	 //page->nvdirty=PAGE_MIGRATED;
+#if 0
+	if(!PageLocked(page)){
+		lock_page(page);
+		page_was_unlocked = 1;
+	}
+#endif
+
+	 if(!find_page_vma(page, private)){
+		nr_invalid_page++; 
+#if 0
+		if(page_was_unlocked)
+			unlock_page(page);
+#endif
+		goto err_migration;
+	 }
+
+#if 0
+	if(page_was_unlocked) 
+		unlock_page(page);
+#endif
+	nonrsrvpg_dbg_count++;
+
+	if(mm)
+	up_read(&mm->mmap_sem);
+	return 0;
+
+err_migration:
+	if(mm)
+	up_read(&mm->mmap_sem);
+	return -1;
+
+}
+
+
+
 int  release_inactive_fastmem(struct list_head *pagelist, int maxattempt)
 {
   int dest=1;
@@ -4027,10 +4155,10 @@ int  release_inactive_fastmem(struct list_head *pagelist, int maxattempt)
   LIST_HEAD(fastpagelist);	
   INIT_LIST_HEAD(&fastpagelist);
 
-  maxattempt = 0;
- 	
-
    flags = flags|MPOL_MF_MOVE|MPOL_MF_MOVE_ALL| MPOL_MF_DISCONTIG_OK;
+
+   drain_all_pages();
+   return 0;
 
 #if 1
    //spin_lock(&migrate_slowmem_lock);
@@ -4046,23 +4174,27 @@ int  release_inactive_fastmem(struct list_head *pagelist, int maxattempt)
 	    //if(page && !PageDirty(page) && !PageUnevictable(page)) /*works at times for graphchi*/
 		//if(page && !PageUnevictable(page) && !PageActive(page)){
 		//if(page && PageLRU(page) && !PageUnevictable(page)){
-		//if(page && PageAnon(page) && !PageUnevictable(page)) {
-		if(page && !PageUnevictable(page) && !PageActive(page)){
-			if(PageAnon(page))
-	    		migrate_hot_pages(page, &fastpagelist,flags);
+		//if(page && !PageAnon(page) && !PageUnevictable(page) && !PageActive(page) ) {
+		//if(page && !PageAnon(page) && !PageActive(page) ) {
+		//if(page && !PageUnevictable(page) && !PageActive(page)){
+		if(page){
+			//if(PageAnon(page))
+	 		 //migrate_hot_pages(page, &fastpagelist,flags);
+			 migrate_lru_pages(page, &fastpagelist,flags);
 		}else {
 			//page->nvpgoff++;
 		}
 	}
 	//if(nonrsrvpg_dbg_count)
-	//	printk(KERN_ALERT "nonrsrvpg_dbg_count %u \n", nonrsrvpg_dbg_count);	
+	//printk(KERN_ALERT "iterated_pages %u \n", iterated_pages);	
 	//return 0;	
 	//spin_unlock(&migrate_slowmem_lock); 	
 #endif 
 
   if (!list_empty(&fastpagelist)) {
+
         spin_lock(&migrate_slowmem_lock);
-		printk(KERN_ALERT "nonrsrvpg_dbg_count %u %u\n", nonrsrvpg_dbg_count, iterated_pages);
+		
         err = migrate_nearmem_pages(&fastpagelist, new_slowpage, dest,
                                   MIGRATE_SYNC, MR_SYSCALL, maxattempt);
         if (err) {
@@ -4071,6 +4203,9 @@ int  release_inactive_fastmem(struct list_head *pagelist, int maxattempt)
 			success++;
         }
         spin_unlock(&migrate_slowmem_lock);
+
+		printk(KERN_ALERT "nonrsrvpg_dbg_count %u %u %u\n", 
+				nonrsrvpg_dbg_count, iterated_pages, nr_reclaim_success);
     }else {
 		printk(KERN_ALERT "LIST EMPTY: nonrsrvpg_dbg_count %u %u\n", nonrsrvpg_dbg_count, iterated_pages);
 	}
