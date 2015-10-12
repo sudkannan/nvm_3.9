@@ -19,6 +19,11 @@
 #include <linux/atomic.h>
 #include <asm/page.h>
 
+/*Persistent memory pVM changes */
+#define NODE_PERSIST 222
+#define NODE_PERSIST_NODE1 1
+#define HETEROMEM
+
 /* Free memory management - zoned buddy allocator.  */
 #ifndef CONFIG_FORCE_MAX_ZONEORDER
 #define MAX_ORDER 11

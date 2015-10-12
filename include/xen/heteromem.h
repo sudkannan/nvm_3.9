@@ -3,7 +3,7 @@
  */
 
 #define RETRY_UNLIMITED	0
-#define PAGE_MIGRATED 111
+//#define PAGE_MIGRATED 111
 
 struct heteromem_stats {
 	/* We aim for 'current allocation' == 'target allocation'. */

@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include <linux/backing-dev.h>
 #include <linux/mm.h>
+#include <linux/nvstruct.h>
 #include <linux/shm.h>
 #include <linux/mman.h>
 #include <linux/pagemap.h>
@@ -38,7 +39,6 @@
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
 #include "internal.h"
-#include <xen/heteromem.h>
 
 //#define LOCAL_DEBUG_FLAG_1
 //#define _DISABLE_PVM_MERGE
@@ -1547,8 +1547,6 @@ munmap_back:
 	vma->vm_pgoff = pgoff;
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
 
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-
 	error = -EINVAL;	/* when rejecting VM_GROWSDOWN|VM_GROWSUP */
 
 	if (file) {
@@ -2686,7 +2684,7 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	if (security_vm_enough_memory_mm(mm, len >> PAGE_SHIFT))
 		return -ENOMEM;
 
-	/* Can we just expand an old private anonymous mapping? */
+	//Can we just expand an old private anonymous mapping? 
 	vma = vma_merge(mm, prev, addr, addr + len, flags,
 					NULL, NULL, pgoff, NULL);
 
@@ -2706,6 +2704,7 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 		vm_unacct_memory(len >> PAGE_SHIFT);
 		return -ENOMEM;
 	}
+
 	INIT_LIST_HEAD(&vma->anon_vma_chain);
 	vma->vm_mm = mm;
 	vma->vm_start = addr;
@@ -2714,9 +2713,6 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	vma->vm_flags = flags;
 	vma->vm_page_prot = vm_get_page_prot(flags);
 	vma_link(mm, vma, prev, rb_link, rb_parent);
-
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-
 out:
 	perf_event_mmap(vma);
 	mm->total_vm += len >> PAGE_SHIFT;
@@ -3190,178 +3186,6 @@ void __init mmap_init(void)
 	VM_BUG_ON(ret);
 }
 
-
-
-#ifdef HETEROMEM
-
-unsigned long nv_mmap_region(struct file *file, unsigned long addr,
-			  unsigned long len, unsigned long flags,
-			  unsigned int vm_flags, unsigned long pgoff,
- 			  struct nvmap_arg_struct *a)
-
-{
-	struct mm_struct *mm = current->mm;
-	struct vm_area_struct *vma, *prev;
-	int correct_wcount = 0;
-	int error;
-	struct rb_node **rb_link, *rb_parent;
-	unsigned long charged = 0;
-	struct inode *inode =  file ? file_inode(file) : NULL;
-
-	/* Clear old maps */
-	error = -ENOMEM;
-munmap_back:
-	if (find_vma_links(mm, addr, addr + len, &prev, &rb_link, &rb_parent)) {
-		if (do_munmap(mm, addr, len))
-			return -ENOMEM;
-		goto munmap_back;
-	}
-	/* Check against address space limit. */
-	if (!may_expand_vm(mm, len >> PAGE_SHIFT))
-		return -ENOMEM;
-
-	/*
-	 * Private writable mapping: check memory availability
-	 */
-	if (accountable_mapping(file, vm_flags)) {
-		charged = len >> PAGE_SHIFT;
-		if (security_vm_enough_memory_mm(mm, charged))
-			return -ENOMEM;
-		vm_flags |= VM_ACCOUNT;
-	}
-
-	/*
-	 * Can we just expand an old mapping?
-	 */
-	vma = vma_merge(mm, prev, addr, addr + len, vm_flags, NULL, file, pgoff, NULL);
-
-#ifdef _DISABLE_PVM_MERGE
-	if (vma && (vma->persist_flags != PERSIST_VMA_FLAG))
-		goto out;
-
-	if (vma && (vma->persist_flags == PERSIST_VMA_FLAG))
-		printk(KERN_ALERT "mmap.c not merging vma for persistent memory \n");
-#else
-	if (vma)
-		goto out;
-#endif
-
-
-	/*
-	 * Determine the object being mapped and call the appropriate
-	 * specific mapper. the address has already been validated, but
-	 * not unmapped, but the maps are removed from the list.
-	 */
-	vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
-	if (!vma) {
-		error = -ENOMEM;
-		goto unacct_error;
-	}
-
-	vma->vm_mm = mm;
-	vma->vm_start = addr;
-	vma->vm_end = addr + len;
-	vma->vm_flags = vm_flags;
-	vma->vm_page_prot = vm_get_page_prot(vm_flags);
-	vma->vm_pgoff = pgoff;
-	vma->persist_flags = PERSIST_VMA_FLAG;
-	INIT_LIST_HEAD(&vma->anon_vma_chain);
-
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-
-	error = -EINVAL;	/* when rejecting VM_GROWSDOWN|VM_GROWSUP */
-
-	if (file) {
-		if (vm_flags & (VM_GROWSDOWN|VM_GROWSUP))
-			goto free_vma;
-		if (vm_flags & VM_DENYWRITE) {
-			error = deny_write_access(file);
-			if (error)
-				goto free_vma;
-			correct_wcount = 1;
-		}
-		vma->vm_file = get_file(file);
-		error = file->f_op->mmap(file, vma);
-		if (error)
-			goto unmap_and_free_vma;
-
-		/* Can addr have changed??
-		 *
-		 * Answer: Yes, several device drivers can do it in their
-		 *         f_op->mmap method. -DaveM
-		 * Bug: If addr is changed, prev, rb_link, rb_parent should
-		 *      be updated for vma_link()
-		 */
-		WARN_ON_ONCE(addr != vma->vm_start);
-
-		addr = vma->vm_start;
-		pgoff = vma->vm_pgoff;
-		vm_flags = vma->vm_flags;
-	} else if (vm_flags & VM_SHARED) {
-		if (unlikely(vm_flags & (VM_GROWSDOWN|VM_GROWSUP)))
-			goto free_vma;
-		error = shmem_zero_setup(vma);
-		if (error)
-			goto free_vma;
-	}
-
-	if (vma_wants_writenotify(vma)) {
-		pgprot_t pprot = vma->vm_page_prot;
-
-		/* Can vma->vm_page_prot have changed??
-		 *
-		 * Answer: Yes, drivers may have changed it in their
-		 *         f_op->mmap method.
-		 *
-		 * Ensures that vmas marked as uncached stay that way.
-		 */
-		vma->vm_page_prot = vm_get_page_prot(vm_flags & ~VM_SHARED);
-		if (pgprot_val(pprot) == pgprot_val(pgprot_noncached(pprot)))
-			vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-	}
-
-	vma_link(mm, vma, prev, rb_link, rb_parent);
-	file = vma->vm_file;
-
-	/* Once vma denies write, undo our temporary denial count */
-	if (correct_wcount)
-		atomic_inc(&inode->i_writecount);
-out:
-	perf_event_mmap(vma);
-	vm_stat_account(mm, vm_flags, file, len >> PAGE_SHIFT);
-	if (vm_flags & VM_LOCKED) {
-		if (!((vm_flags & VM_SPECIAL) || is_vm_hugetlb_page(vma) ||
-					vma == get_gate_vma(current->mm)))
-			mm->locked_vm += (len >> PAGE_SHIFT);
-		else
-			vma->vm_flags &= ~VM_LOCKED;
-	}
-
-	if (file)
-		uprobe_mmap(vma);
-
-	return addr;
-
-unmap_and_free_vma:
-	if (correct_wcount)
-		atomic_inc(&inode->i_writecount);
-	vma->vm_file = NULL;
-	fput(file);
-
-	/* Undo any partial mapping done by a device driver. */
-	unmap_region(mm, vma, prev, vma->vm_start, vma->vm_end);
-	charged = 0;
-free_vma:
-	kmem_cache_free(vm_area_cachep, vma);
-unacct_error:
-	if (charged)
-		vm_unacct_memory(charged);
-	return error;
-}
-
-
-#else
-
 //FIXME:delete and fix this later
 unsigned int del_chunk_id = 1;
 
@@ -3449,15 +3273,6 @@ munmap_back:
 		    vma->vm_start, vma->vm_end, len, vma->vma_id);
 #endif
 
-
-//#ifdef HETEROMEM
-#if 0
-     if(current->mm){
-         current->mm->def_flags = VM_HETERO | current->mm->def_flags;
-		 current->heteroflag = PF_HETEROMEM;
-         //printk(KERN_ALERT "Setting the current->mm->def_flags \n");
-     }
-#endif
 	error = -EINVAL;	/* when rejecting VM_GROWSDOWN|VM_GROWSUP */
 
 	if(a)
@@ -3531,7 +3346,7 @@ munmap_back:
 	/* Once vma denies write, undo our temporary denial count */
 	if (correct_wcount)
 		atomic_inc(&inode->i_writecount);
-out:
+
 	perf_event_mmap(vma);
 	vm_stat_account(mm, vm_flags, file, len >> PAGE_SHIFT);
 	if (vm_flags & VM_LOCKED) {
@@ -3568,7 +3383,7 @@ unacct_error:
 		vm_unacct_memory(charged);
 	return error;
 }
-#endif
+
 
 
 #ifdef CONFIG_NUMA
@@ -3621,12 +3436,11 @@ static int persist_mset_policy(struct vm_area_struct *vma, struct mempolicy *new
 #endif
 		goto pol_error;
 	}
-#endif
-
     return 1;
 
-pol_error:
 	return -1;
+#endif
+	return 0;
 }
 
 static struct mempolicy *persist_mget_policy(struct vm_area_struct *vma,
@@ -3666,8 +3480,6 @@ unsigned long do_nv_mmap_pgoff(struct file *file, unsigned long addr,
 	struct mm_struct *mm = NULL;
 	struct inode *inode;
 	unsigned int vm_flags;
-	int error;
-	unsigned long reqprot = prot;
 	unsigned int chunkid = 0;
 	unsigned int procid = 0;
 	unsigned long *populate;
@@ -3675,6 +3487,10 @@ unsigned long do_nv_mmap_pgoff(struct file *file, unsigned long addr,
 	if(a== NULL)
 		printk(KERN_ALERT "do_nv_mmap_pgoff: invalid argument \n"); 
 
+    if(current){
+		//printk(KERN_ALERT "do_nv_mmap_pgoff : pgoff %lu %u %u \n",pgoff,chunkid,procid);
+		current->heteroflag = PF_HETEROMEM;
+	}
 	procid = a->procid;
 	chunkid = a->chunkid;
 	//*populate = 0;
@@ -3867,13 +3683,17 @@ asmlinkage long sys_nv_mmap_pgoff( unsigned long addr, unsigned long len,
 	unsigned long fd;
 	int clear_flag = 0;
 	struct nvmap_arg_struct a;
-	unsigned long populate=0;
 	struct vm_area_struct *vma;
 
     if (copy_from_user(&a, nvarg, sizeof(a)))
         return -EFAULT;
 
-    fd = a.fd;
+    if(current){
+		//printk(KERN_ALERT "Setting process PF_HETEROMEM flag \n");
+		current->heteroflag = PF_HETEROMEM;
+	}
+	
+	fd = a.fd;
 	pgoff = a.pgoff;
 	chunkid = a.chunkid;
 	procid = a.procid;
@@ -3928,15 +3748,6 @@ asmlinkage long sys_nv_mmap_pgoff( unsigned long addr, unsigned long len,
 	 /*if the pages are supposed to be non persistent*/
      if(a.noPersist)
 		goto out;
-
-//#ifdef HETEROMEM
-#if 0
-	 if(current->mm){
-		 current->mm->def_flags = VM_HETERO | current->mm->def_flags;
-		 printk(KERN_ALERT "Setting the current->mm->def_flags \n");
-	 }
-#endif
-
 
 	/*after all allocation has been done
 	update the NVRAM allocation tree for
@@ -4013,16 +3824,15 @@ asmlinkage long sys_nv_commit( unsigned long addr, unsigned long len,
 
     return 0;
 
-error:
-    printk("incorrect vma address \n");
-    return -1;
+//error:
+    //printk("incorrect vma address \n");
+    //return -1;
 }
 
 unsigned long do_persistent_alloc(unsigned long addr, unsigned long len)
 {
-
 #if 0
-    /*struct mm_struct * mm = current->mm;
+    struct mm_struct * mm = current->mm;
     struct vm_area_struct * vma, * prev;
     unsigned long flags;
     struct rb_node ** rb_link, * rb_parent;
@@ -4097,7 +3907,7 @@ unsigned long do_persistent_alloc(unsigned long addr, unsigned long len)
                 goto enomem;
         }
 
-    /* Can we just expand an old private anonymous mapping? */
+    // Can we just expand an old private anonymous mapping? 
     vma = vma_merge(mm, prev, addr, addr + len, flags,
                     NULL, NULL, pgoff, NULL);
     if (vma) {

@@ -1,5 +1,6 @@
 #include <linux/kernel_stat.h>
 #include <linux/mm.h>
+#include <linux/nvstruct.h>
 #include <linux/hugetlb.h>
 #include <linux/mman.h>
 #include <linux/swap.h>
@@ -39,17 +40,45 @@
 #include <xen/balloon.h>
 #include <xen/heteromem.h>
 
+#define BACKING_STORE
+
+#ifdef BACKING_STORE
+#include <linux/module.h>
+#include <linux/string.h>
+#include <linux/slab.h>
+#include <linux/vfs.h>
+#include <linux/uaccess.h>
+#include <linux/io.h>
+#include <linux/mount.h>
+#include <linux/bitops.h>
+#include <linux/cred.h>
+#include <linux/backing-dev.h>
+
+#include <linux/fs.h>
+#include <linux/err.h>
+#include <linux/slab.h>
+#include <linux/cpu.h>
+#include <linux/vmstat.h>
+#include <linux/sched.h>
+#include <linux/math64.h>
+#include <linux/writeback.h>
+#include <linux/compaction.h>
+#endif
+
 //#define LOCAL_DEBUG_FLAG_1
 //#define LOCAL_DEBUG_FLAG
 //#define NV_STATS_DEBUG
 //#define NVM_OPTIMIZE_1
-#define NVM_OPTIMIZE_2
+//#define NVM_OPTIMIZE_2
 //#define NVM_OPTIMIZE_3
-
-#ifdef NVM_OPTIMIZE_2
-#define BATCHSIZE 4*1024*1024
+//#ifdef NVM_OPTIMIZE_2
+#define NVM_OPTIMIZE_2_3
+#define BATCHSIZE 32*1024*1024
 #define CHUNK_VMACACHESZ 256
-#endif
+#define NVM_JOURNAL
+#define NVMJOURNALSZ 4*1024*1024
+#define MAX_LOG_ENTERIES 4
+//#endif
 
 //Currently restrict the write to less than one page
 #define MAX_NV_WRITE_SIZE  4096
@@ -73,12 +102,26 @@ unsigned int g_nvpg_read_cnt;
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(nv_proclist_lock);
 
 /*---Global variales--*/
+#ifdef NV_STATS_DEBUG
+	void print_global_nvstats(void);
+#endif
 
+#ifdef BACKING_STORE
+#define BACKINGFILE "/proc/nvmaps"
+void nvm_load_from_file(char *nvm_backing_file);
+#endif
 
-/*--------------------------------------------------------------------------------------*/
+#ifdef NVM_OPTIMIZE_2_3
+void *nvpage_start = NULL;
+unsigned int nvpage_used;
+#endif
 
-//static function list
+#ifdef NVM_OPTIMIZE_2
+unsigned long chunkid_vma_cache[CHUNK_VMACACHESZ];
+unsigned int vmacache_cnt;	
+#endif
 
+/*-------------static function list---------------------------------------*/
 static int create_add_chunk(struct nv_proc_obj *proc_obj, 
 							struct rqst_struct *rqst);
 static int add_chunk(struct nv_chunk *chunk, struct nv_proc_obj *proc_obj);
@@ -92,32 +135,605 @@ unsigned int find_offset(struct vm_area_struct *vma, unsigned long addr);
 struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj);
 long sys_clear_all_persist( unsigned long proc_id);
 
-#ifdef NV_STATS_DEBUG
-	void print_global_nvstats(void);
-#endif
-
-
-unsigned int jenkin_hash(char *key, unsigned int len)
+/*************** NVM PERSISTENCE FUNCTIONS AND ATOMICS***************/
+static inline void pvm_flush_buffer(void *buf, uint32_t len, bool fence)
 {
-    unsigned int hash, i;
-    for(hash = i = 0; i < len; ++i)
-    {
-        hash += key[i];
-        hash += (hash << 10);
-        hash ^= (hash >> 6);
-    }
-    hash += (hash << 3);
-    hash ^= (hash >> 11);
-    hash += (hash << 15);
-    return (unsigned int)hash;
+    uint32_t i;
+    len = len + ((unsigned long)(buf) & (CACHELINE_SIZE - 1));
+    for (i = 0; i < len; i += CACHELINE_SIZE)
+        asm volatile ("clflush %0\n" : "+m" (*(char *)(buf+i)));
+    /* Do a fence only if asked. We often don't need to do a fence
+     * immediately after clflush because even if we get context switched
+     * between clflush and subsequent fence, the context switch operation
+     * provides implicit fence. */
+    if (fence)
+        asm volatile ("sfence\n" : : );
+}	
+
+/* Provides ordering from all previous clflush too */
+static inline void PERSISTENT_MARK(void)
+{
+    /* TODO: Fix me. */
 }
 
-#ifdef NVM_OPTIMIZE_2
-void *nvpage_start = NULL;
-unsigned int nvpage_used;
-unsigned long chunkid_vma_cache[CHUNK_VMACACHESZ];
-unsigned int vmacache_cnt;	
+static inline void PERSISTENT_BARRIER(void)
+{
+    asm volatile ("sfence\n" : : );
+}
 
+
+/* uses CPU instructions to atomically write up to 8 bytes */
+static inline void nvm_memcpy_atomic (void *dst, const void *src, u8 size)
+{
+    switch (size) {
+        case 1: {
+            volatile u8 *daddr = dst;
+            const u8 *saddr = src;
+            *daddr = *saddr;
+            break;
+        }
+        case 2: {
+            volatile u16 *daddr = dst;
+            const u16 *saddr = src;
+            *daddr = cpu_to_le16(*saddr);
+            break;
+        }
+        case 4: {
+            volatile u32 *daddr = dst;
+            const u32 *saddr = src;
+            *daddr = cpu_to_le32(*saddr);
+            break;
+        }
+        case 8: {
+            volatile u64 *daddr = dst;
+            const u64 *saddr = src;
+            *daddr = cpu_to_le64(*saddr);
+            break;
+        }
+        default:
+            printk(KERN_ALERT "error: memcpy_atomic called with %d bytes\n", size);
+            //BUG();
+     }
+}
+
+
+/* assumes the length to be 4-byte aligned */
+static inline void memset_nt(void *dest, uint32_t dword, size_t length)
+{
+    uint64_t dummy1, dummy2;
+    uint64_t qword = ((uint64_t)dword << 32) | dword;
+
+    asm volatile ("movl %%edx,%%ecx\n"
+        "andl $63,%%edx\n"
+        "shrl $6,%%ecx\n"
+        "jz 9f\n"
+        "1:      movnti %%rax,(%%rdi)\n"
+        "2:      movnti %%rax,1*8(%%rdi)\n"
+        "3:      movnti %%rax,2*8(%%rdi)\n"
+        "4:      movnti %%rax,3*8(%%rdi)\n"
+        "5:      movnti %%rax,4*8(%%rdi)\n"
+        "8:      movnti %%rax,5*8(%%rdi)\n"
+        "7:      movnti %%rax,6*8(%%rdi)\n"
+        "8:      movnti %%rax,7*8(%%rdi)\n"
+        "leaq 64(%%rdi),%%rdi\n"
+        "decl %%ecx\n"
+        "jnz 1b\n"
+        "9:     movl %%edx,%%ecx\n"
+        "andl $7,%%edx\n"
+        "shrl $3,%%ecx\n"
+        "jz 11f\n"
+        "10:     movnti %%rax,(%%rdi)\n"
+ 	"leaq 8(%%rdi),%%rdi\n"
+        "decl %%ecx\n"
+        "jnz 10b\n"
+        "11:     movl %%edx,%%ecx\n"
+        "shrl $2,%%ecx\n"
+        "jz 12f\n"
+        "movnti %%eax,(%%rdi)\n"
+        "12:\n"
+        : "=D"(dummy1), "=d" (dummy2) : "D" (dest), "a" (qword), "d" (length) : "memory", "rcx");
+}
+/*************** NVM PERSISTENCE FUNCTIONS AND ATOMICS***************/
+
+
+
+/**********TRANSACTION STRUCTURE HELPER*******/
+
+uint16_t genid=0;
+uint16_t next_transaction_id=0;
+
+static inline uint32_t next_log_entry(uint32_t jsize, uint32_t le_off)
+{
+    le_off = le_off + LOGENTRY_SIZE;
+    if (le_off >= jsize)
+        le_off = 0;
+    return le_off;
+}
+
+static inline uint32_t prev_log_entry(uint32_t jsize, uint32_t le_off)
+{
+    if (le_off == 0)
+        le_off = jsize;
+    le_off = le_off - LOGENTRY_SIZE;
+    return le_off;
+}
+
+static inline uint16_t next_gen_id(uint16_t gen_id)
+{
+    gen_id++;
+    /* check for wraparound */
+    if (gen_id == 0)
+        gen_id++;
+    return gen_id;
+}
+
+static inline uint16_t prev_gen_id(uint16_t gen_id)
+{
+    gen_id--;
+    /* check for wraparound */
+    if (gen_id == 0)
+        gen_id--;
+    return gen_id;
+}
+
+/**********CODE RELATED TO INIT AND ALLOC OF TRANSACTION STRUCTURE*******/
+
+static struct kmem_cache *pmfs_transaction_cachep;
+
+static int __init init_transaction_cache(void)
+{
+    pmfs_transaction_cachep = kmem_cache_create("pmfs_journal_transaction",
+            sizeof(pmfs_transaction_t), 0, (SLAB_RECLAIM_ACCOUNT |
+            SLAB_MEM_SPREAD), NULL);
+    if (pmfs_transaction_cachep == NULL) {
+        printk(KERN_ALERT "PMFS: failed to init transaction cache\n");
+        return -ENOMEM;
+    }
+    return 0;
+}
+
+static void destroy_transaction_cache(void)
+{
+    if (pmfs_transaction_cachep)
+        kmem_cache_destroy(pmfs_transaction_cachep);
+    pmfs_transaction_cachep = NULL;
+}
+
+inline pmfs_transaction_t *pvm_alloc_transaction(void)
+{
+    return (pmfs_transaction_t *)
+        kmem_cache_alloc(pmfs_transaction_cachep, GFP_NOFS);
+}
+
+inline void pvm_free_transaction(pmfs_transaction_t *trans)
+{
+    kmem_cache_free(pmfs_transaction_cachep, trans);
+}
+
+/**********CODE RELATED TO INIT, ALLOC, AND TRANSACT STRUCT*******/
+
+/*Returns the address of per process journal*/
+pmfs_journal_t *pvm_set_journal(struct nv_proc_obj *sb){
+
+	if(!sb) {
+		printk(KERN_ALERT "pvm_set_journal: procobj NULL\n");
+	}
+	sb->journal = (pmfs_journal_t *)vmalloc(NVMJOURNALSZ);
+	if(!sb->journal) {
+		printk(KERN_ALERT "pvm_set_journal: sb->journal alloc failed\n");
+		return NULL;
+	}
+	sb->jsize = NVMJOURNALSZ;	
+	return sb->journal;	
+}
+
+/*Returns per process journal base data addr*/
+uint64_t pvm_get_journal_base(struct nv_proc_obj *sb){
+
+	void *base = NULL;
+	if(!sb->journal) {
+		printk(KERN_ALERT "pvm_get_journal_base: sb->journal NULL\n");
+		return NULL;
+	}
+	base = sb->journal + sizeof(pmfs_journal_t);
+	return (uint64_t)base;
+}
+
+/*Returns the address of per process journal*/
+pmfs_journal_t *pvm_get_journal(struct nv_proc_obj *sb){
+	return sb->journal;	
+}
+
+int pvm_journal_hard_init(struct nv_proc_obj *sb, uint64_t base,
+	uint32_t size)
+{
+#ifdef LOGWRAPAROUND	
+	struct pmfs_sb_info *sbi = PMFS_SB(sb);
+#endif
+
+	pmfs_journal_t *journal = pvm_get_journal(sb);
+	if(!journal) {
+		printk(KERN_ALERT "pvm_journal_hard_init journal NULL\n");
+		return -1;
+	}
+#ifdef LOGWRAPAROUND
+	pmfs_memunlock_range(sb, journal, sizeof(*journal));
+#endif
+	journal->base = cpu_to_le64(base);
+	journal->size = cpu_to_le32(size);
+	journal->gen_id = cpu_to_le16(1);
+	journal->head = journal->tail = 0;
+	/* lets do Undo logging for now */
+	journal->redo_logging = 0;
+#ifdef LOGWRAPAROUND	
+	pmfs_memlock_range(sb, journal, sizeof(*journal));
+	sbi->journal_base_addr = pmfs_get_block(sb, base);
+	pmfs_memunlock_range(sb, sbi->journal_base_addr, size);
+	memset_nt(sbi->journal_base_addr, 0, size);
+	pmfs_memlock_range(sb, sbi->journal_base_addr, size);
+	return pmfs_journal_soft_init(sb);
+#endif
+	return 0;
+}
+
+
+
+pmfs_transaction_t *pvm_new_transaction(struct nv_proc_obj *sb,
+        int max_log_entries)
+{
+    /*get per process journal structure*/
+    pmfs_journal_t *journal = pvm_get_journal(sb);
+
+	printk(KERN_ALERT "pvm_new_transaction: Create a new journal \n");
+
+#ifdef LOGWRAPAROUND
+    struct procobj_sb_info *sbi = sb->sb_info;
+#endif
+
+    pmfs_transaction_t *trans;
+    uint32_t head, tail, req_size, avail_size;
+    uint64_t base;
+
+#ifdef LOGWRAPAROUND
+    /*PVM Comment it for now*/	
+    /* If it is an undo log, need one more log-entry for commit record */
+    if (!sbi->redo_log)
+        max_log_entries++;
+#endif
+
+    trans = pvm_alloc_transaction();
+    if (!trans)
+        return ERR_PTR(-ENOMEM);
+
+    memset(trans, 0, sizeof(*trans));
+
+	printk(KERN_ALERT "pvm_new_transaction: Allocated a new trans\n");
+
+    trans->num_used = 0;
+    trans->num_entries = max_log_entries;
+    trans->t_journal = journal;
+    req_size = max_log_entries << LESIZE_SHIFT;
+
+#ifdef LOGWRAPAROUND
+    mutex_lock(&sb->journal_mutex);
+#endif
+
+    tail = le32_to_cpu(journal->tail);
+    head = le32_to_cpu(journal->head);
+
+    trans->transaction_id = next_transaction_id++;
+
+again:
+    trans->gen_id = le16_to_cpu(journal->gen_id);
+
+    printk(KERN_ALERT "pvm_new_transaction:: "
+	"transaction_id %d req_size %u, trans->num_entries %d trans->num_used %u\n",
+	trans->transaction_id, req_size, trans->num_entries,trans->num_used);
+
+    avail_size = (tail >= head) ?
+        (sb->jsize - (tail - head)) : (head - tail);
+
+    avail_size = avail_size - LOGENTRY_SIZE;
+
+    if (avail_size < req_size) {
+        uint32_t freed_size;
+
+#ifdef LOGWRAPAROUND
+	/*PVM Comment it for now*/	
+        /* run the log cleaner function to free some log entries */
+        freed_size = pmfs_free_logentries(max_log_entries);
+        if ((avail_size + freed_size) < req_size)
+            goto journal_full;
+#endif
+
+    }
+
+    base = le64_to_cpu(journal->base) + tail;
+    tail = tail + req_size;
+
+#ifdef LOGWRAPAROUND
+    /* journal wraparound because of this transaction allocation.
+     * start the transaction from the beginning of the journal so
+     * that we don't have any wraparound within a transaction */
+    pmfs_memunlock_range(sb, journal, sizeof(*journal));
+
+    if (tail >= sbi->jsize) {
+        volatile u64 *ptr;
+        tail = 0;
+        /* write the gen_id and tail atomically. Use of volatile is
+         * normally prohibited in kernel code, but it is required here
+         * because we want to write atomically against power failures
+         * and locking can't provide that. */
+        ptr = (volatile u64 *)&journal->tail;
+        /* writing 8-bytes atomically setting tail to 0 */
+        set_64bit(ptr, (u64)cpu_to_le16(next_gen_id(le16_to_cpu(
+                journal->gen_id))) << 32);
+        pmfs_memlock_range(sb, journal, sizeof(*journal));
+        pmfs_dbg_trans("journal wrapped. tail %x gid %d cur tid %d\n",
+            le32_to_cpu(journal->tail),le16_to_cpu(journal->gen_id),
+                sbi->next_transaction_id - 1);
+        goto again;
+    } else {
+        journal->tail = cpu_to_le32(tail);
+        pmfs_memlock_range(sb, journal, sizeof(*journal));
+    }
+    mutex_unlock(&sbi->journal_mutex);
+#endif
+
+    avail_size = avail_size - req_size;
+
+#ifdef LOGWRAPAROUND
+    /* wake up the log cleaner if required */
+    if ((sbi->jsize - avail_size) > (sbi->jsize >> 3))
+        wakeup_log_cleaner(sbi);
+    pmfs_flush_buffer(&journal->tail, sizeof(u64), false);
+    pmfs_dbg_trans("new transaction tid %d nle %d avl sz %x sa %llx\n",
+        trans->transaction_id, max_log_entries, avail_size, base);
+#endif
+
+	trans->start_addr = (pmfs_logentry_t *)pvm_get_journal_base(sb);
+
+#ifdef LOGWRAPAROUND
+    trans->start_addr = pmfs_get_block(sb, base);
+    trans->parent = (pmfs_transaction_t *)current->journal_info;
+    current->journal_info = trans;
+    
+#endif
+
+    printk(KERN_ALERT "created new transaction tid %d nle %d avl sz %x sa %llx\n",
+        trans->transaction_id, max_log_entries, avail_size, base);
+
+    return trans;	
+
+#ifdef LOGWRAPAROUND
+journal_full:
+    mutex_unlock(&sbi->journal_mutex);
+    pmfs_err(sb, "Journal full. base %llx sz %x head:tail %x:%x ncl %x\n",
+        le64_to_cpu(journal->base), le32_to_cpu(journal->size),
+        le32_to_cpu(journal->head), le32_to_cpu(journal->tail),
+        max_log_entries);
+    pmfs_free_transaction(trans);
+    return ERR_PTR(-EAGAIN);
+#endif
+}
+
+/* If this is part of a read-modify-write of the block,
+ * pvm_memunlock_block() before calling! */
+static inline void *pvm_get_dataaddr(struct nv_proc_obj *sb, u64 off)
+{
+	/*nvpage_start is the pointer to starting address of 
+	OS metadata*/
+    return off ? ((void *)nvpage_start + off) : NULL;
+}
+
+
+/*Starting address from start of the persistent region
+Does not make too much sense now*/
+static inline u64
+pvm_get_addr_off(struct nv_proc_obj *sb, void *addr)
+{
+   return addr? (u64)(addr -(void *)nvpage_start) : 0;
+}
+
+/* can be called by either during log cleaning or during journal recovery */
+static void pvm_flush_transaction(struct nv_proc_obj *sb,
+        pmfs_transaction_t *trans)
+{
+
+	printk(KERN_ALERT "Begin pvm_flush_transaction \n");
+
+	if(!trans) {
+		printk(KERN_ALERT "pvm_flush_transaction NULL trans\n");
+		return;
+	}
+
+#ifdef LOGWRAPAROUND
+    struct pmfs_sb_info *sbi = PMFS_SB(sb);
+#endif
+    pmfs_logentry_t *le = trans->start_addr;
+    int i;
+    char *data;
+
+	if(!le) {
+		printk(KERN_ALERT "le pointer NULL, error \n");
+		return;
+	}
+
+    for (i = 0; i < trans->num_used; i++, le++) {
+        if (le->size) {
+			printk(KERN_ALERT "add le size %x %u\n",le->size, trans->num_used);
+            data = pvm_get_dataaddr(sb,le64_to_cpu(le->addr_offset));
+#ifdef LOGWRAPAROUND
+            if (sbi->redo_log) {
+                pmfs_memunlock_range(sb, data, le->size);
+                memcpy(data, le->data, le->size);
+                pmfs_memlock_range(sb, data, le->size);
+            } else
+#endif
+			if(data)	
+	            pvm_flush_buffer(data, le->size, false);
+        }
+    }
+}
+
+static inline void pmfs_commit_logentry(struct nv_proc_obj *sb,
+        pmfs_transaction_t *trans, pmfs_logentry_t *le)
+{
+#ifdef LOGWRAPAROUND
+    struct pmfs_sb_info *sbi = PMFS_SB(sb);
+    if (sbi->redo_log) {
+        /* Redo Log */
+        PERSISTENT_MARK();
+        PERSISTENT_BARRIER();
+        /* Atomically write the commit type */
+        le->type |= LE_COMMIT;
+        barrier();
+        /* Atomically make the log entry valid */
+        le->gen_id = cpu_to_le16(trans->gen_id);
+        pmfs_flush_buffer(le, LOGENTRY_SIZE, false);
+        PERSISTENT_MARK();
+        PERSISTENT_BARRIER();
+        /* Update the FS in place */
+        pmfs_flush_transaction(sb, trans);
+    } else 
+#endif
+	{
+		printk(KERN_ALERT "Begin UNDO trans commit \n");	
+        /* Undo Log */
+        /* Update the FS in place: currently already done. so
+         * only need to clflush */
+        pvm_flush_transaction(sb, trans);
+        PERSISTENT_MARK();
+        PERSISTENT_BARRIER();
+        /* Atomically write the commit type */
+        le->type |= LE_COMMIT;
+        barrier();
+        /* Atomically make the log entry valid */
+        le->gen_id = cpu_to_le16(trans->gen_id);
+		printk(KERN_ALERT "Perform buffer flush\n");	
+        pvm_flush_buffer(le, LOGENTRY_SIZE, true);
+    }
+}
+
+int pvm_add_logentry(struct nv_proc_obj *sb,
+        pmfs_transaction_t *trans, void *addr, uint16_t size, u8 type)
+{
+#ifdef LOGWRAPAROUND
+    struct pmfs_sb_info *sbi = PMFS_SB(sb);
+#endif
+    pmfs_logentry_t *le;
+    int num_les = 0, i;
+#ifdef LOGWRAPAROUND
+    uint64_t le_start = size ? pmfs_get_addr_off(sbi, addr) : 0;
+#else
+    uint64_t le_start = size ? pvm_get_addr_off(sb, addr) : 0;
+#endif
+    uint8_t le_size;
+
+    if (trans == NULL)
+        return -EINVAL;
+    le = trans->start_addr + trans->num_used;
+
+    if (size == 0) {
+        /* At least one log entry required for commit/abort log entry */
+        if ((type & LE_COMMIT) || (type & LE_ABORT)) {
+			printk(KERN_ALERT "LE_COMMIT transaction\n");
+            num_les = 1;
+		}
+    } else
+        num_les = (size + sizeof(le->data) - 1)/sizeof(le->data);
+    printk(KERN_ALERT "add le id %d size %x, num_les %d tail %x le %p\n",
+        trans->transaction_id, size, trans->num_entries,
+        trans->num_used, le);
+#ifdef LOGWRAPAROUND
+    if ((trans->num_used + num_les) > trans->num_entries) {
+        pmfs_err(sb, "Log Entry full. tid %x ne %x tail %x size %x\n",
+            trans->transaction_id, trans->num_entries,
+            trans->num_used, size);
+        dump_transaction(sbi, trans);
+        dump_stack();
+        return -ENOMEM;
+    }
+#endif
+#ifdef LOGWRAPAROUND
+    pmfs_memunlock_range(sb, le, sizeof(*le) * num_les);
+#endif
+    for (i = 0; i < num_les; i++) {
+        le->addr_offset = cpu_to_le64(le_start);
+        le->transaction_id = cpu_to_le32(trans->transaction_id);
+        le_size = (i == (num_les - 1)) ? size : sizeof(le->data);
+        le->size = le_size;
+        size -= le_size;
+        if (le_size)
+            memcpy(le->data, addr, le_size);
+        le->type = type;
+
+        if (i == 0 && trans->num_used == 0)
+            le->type |= LE_START;
+        trans->num_used++;
+
+        /* handle special log entry */
+        if (i == (num_les - 1) && (type & LE_COMMIT)) {
+			if(trans)
+				printk(KERN_ALERT "LE_COMMIT trans->id %u\n", 
+					trans->transaction_id);
+            pmfs_commit_logentry(sb, trans, le);
+#ifdef LOGWRAPAROUND
+            pmfs_memlock_range(sb, le, sizeof(*le) * num_les);
+#endif
+           return 0;
+        }
+        /* put a compile time barrier so that compiler doesn't reorder
+         * the writes to the log entry */
+        barrier();
+
+        /* Atomically make the log entry valid */
+        le->gen_id = cpu_to_le16(trans->gen_id);
+        pvm_flush_buffer(le, LOGENTRY_SIZE, false);
+        addr += le_size;
+        le_start += le_size;
+        le++;
+    }
+    printk(KERN_ALERT "successfuly added "
+		"le id %d size %x, num_les %d tail %x\n",
+        trans->transaction_id, size, trans->num_entries,
+        trans->num_used);
+
+#ifdef LOGWRAPAROUND
+    pmfs_memlock_range(sb, le, sizeof(*le) * num_les);
+    if (!sbi->redo_log) {
+        PERSISTENT_MARK();
+        PERSISTENT_BARRIER();
+    }
+#endif
+    return 0;
+}
+
+int pvm_commit_transaction(struct nv_proc_obj *sb, pmfs_transaction_t *trans)
+{
+    if (trans == NULL)
+        return 0;
+    /* Add the commit log-entry */
+    pvm_add_logentry(sb, trans, NULL, 0, LE_COMMIT);
+
+    printk(KERN_ALERT "completing transaction for id %d\n",
+        trans->transaction_id);
+#ifdef LOGWRAPAROUND
+    current->journal_info = trans->parent;
+#endif
+    pvm_free_transaction(trans);
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+#ifdef NVM_OPTIMIZE_2
 void add_to_chunk_cache(struct nv_chunk *chunk, unsigned int vmaid){
 
 	//if(CHUNK_VMACACHESZ > vmacache_cnt) {
@@ -152,29 +768,54 @@ void clear_chunk_cache(void) {
 	}
 	vmacache_cnt = 0;
 }
+#endif
 
+unsigned int jenkin_hash(char *key, unsigned int len)
+{
+    unsigned int hash, i;
+    for(hash = i = 0; i < len; ++i)
+    {
+        hash += key[i];
+        hash += (hash << 10);
+        hash ^= (hash >> 6);
+    }
+    hash += (hash << 3);
+    hash ^= (hash >> 11);
+    hash += (hash << 15);
+    return (unsigned int)hash;
+}
+
+
+
+#ifdef NVM_OPTIMIZE_2_3
 /*Large kmalloc allocation avoids and reduces 
  * TLB miss
  * TODO: the nvpage_start should be per process 
  * instead of one global varialbe*/
-void *large_nvstruct_alloc(void){
+void *large_nvstruct_alloc(int size){
 
 	void *ptr = NULL;
-	int nvpagesize = sizeof(struct nvpage);
 
 	if(!nvpage_start){
-		nvpage_start = kmalloc(BATCHSIZE , GFP_KERNEL);
+		nvpage_start = vmalloc(BATCHSIZE); //kmalloc(BATCHSIZE , GFP_KERNEL);
 		if(!nvpage_start) {
 			printk(KERN_ALERT "NVM_OPTIMIZE large_nvstruct_alloc "
 					"Cannot alloc %u \n",BATCHSIZE);
 			goto err_nvstruct_alloc;
+		}else {
+			printk(KERN_ALERT "large_nvstruct_alloc succeeds \n");
 		}	
 		nvpage_used = 0;
 	}
     ptr  = nvpage_start + nvpage_used;
-	nvpage_used = nvpage_used + nvpagesize;
-	return ptr;
+	nvpage_used = nvpage_used + size;
 
+	if(nvpage_used > BATCHSIZE){
+		nvpage_start = NULL;
+		printk(KERN_ALERT 
+				"large_nvstruct_alloc needs large alloc\n");
+	}
+	return ptr;
 err_nvstruct_alloc:	
 	return NULL;
 }
@@ -195,17 +836,50 @@ struct nv_proc_obj * create_proc_obj( unsigned int pid ) {
 
    struct nv_proc_obj *proc_obj = NULL;
 
+#ifdef NVM_OPTIMIZE_2_3
+    proc_obj =large_nvstruct_alloc(sizeof(struct nv_proc_obj));
+    if(!proc_obj)
+#endif
    proc_obj = kmalloc(sizeof(struct nv_proc_obj) , GFP_KERNEL);
 	if ( !proc_obj ) {
           printk("create_proc_obj:create_proc_obj failed\n");     
           return NULL;
 	}
+
+#ifdef NVM_JOURNAL
+   pmfs_journal_t *journal;
+   pmfs_transaction_t *trans;
+
+    journal = pvm_set_journal(proc_obj);
+	pvm_journal_hard_init(proc_obj, journal,NVMJOURNALSZ);
+    //if (IS_ERR(trans))
+      //  return PTR_ERR(trans);
+	if((trans =pvm_new_transaction(proc_obj, MAX_LOG_ENTERIES))!= NULL)
+	{
+		printk(KERN_ALERT "Transaction creation success \n");
+	}
+	else {
+		printk(KERN_ALERT "Transaction creation failed \n");
+		goto ret_proc_obj;		
+	}
+
+	/*Add proc obj to log entry*/
+	if(pvm_add_logentry(proc_obj,trans,
+		(void*)proc_obj, sizeof(struct nv_proc_obj), LE_DATA) == 0)
+			printk(KERN_ALERT "Transaction log entry success \n");
+	else
+		printk(KERN_ALERT "Transaction log entry failed\n");
+#endif
+
 	proc_obj->chunk_initialized = 0;		
-    proc_obj->pid = pid;
+	proc_obj->pid = pid;
 	//RBchunk tree
 	proc_obj->chunk_tree = RB_ROOT;
+#ifdef NVM_JOURNAL
+	pvm_commit_transaction(proc_obj, trans);
+#endif
+ret_proc_obj:
 	return proc_obj; 
-
 }
 EXPORT_SYMBOL(create_proc_obj);
 
@@ -214,9 +888,12 @@ void delete_proc_obj(struct nv_proc_obj *proc_obj) {
 	if(&proc_obj->head_proc)
 		list_del(&proc_obj->head_proc);
 
+#ifndef NVM_OPTIMIZE_2_3
 	if(proc_obj) {
 		kfree(proc_obj);
 	}
+#endif
+
 }
 EXPORT_SYMBOL(delete_proc_obj);
 
@@ -265,9 +942,9 @@ EXPORT_SYMBOL(find_proc_obj);
 /*Method to add new NVRAM process*/
 int update_process(unsigned int proc_id, unsigned int chunk_id, size_t chunk_size, 
 																	int clear_flg) {
-  struct nv_proc_obj *proc_obj = NULL;	
-  struct rqst_struct rqst;
-  struct nv_chunk *chunk = NULL;	
+  	struct nv_proc_obj *proc_obj = NULL;	
+  	struct rqst_struct rqst;
+	struct nv_chunk *chunk = NULL;	
 
 	if (proc_id < 1){
 		printk("update_process: Invalid proc id %d \n", proc_id);
@@ -278,11 +955,9 @@ int update_process(unsigned int proc_id, unsigned int chunk_id, size_t chunk_siz
 	then, we do not need to find but just initialize
 	the tree*/
 	if(!proc_list_init_flag){  
-
 		printk("update_process: initializing new process object list \n");		 
  	    INIT_LIST_HEAD(&nv_proc_objlist);
         proc_list_init_flag = 1;
-
 	}else {
 #ifdef LOCAL_DEBUG_FLAG
 		printk("update_process: finding object list \n");	
@@ -296,10 +971,6 @@ int update_process(unsigned int proc_id, unsigned int chunk_id, size_t chunk_siz
 		if(!proc_obj){
 			goto error;
 		}
-#ifdef LOCAL_DEBUG_FLAG
-		printk("update_process: after creating  new process object list \n");
-#endif
-
 		//ok now add it to the process tree
 		if (add_proc_obj(proc_obj)){
 			printk("update_process:Adding process object failed \n");
@@ -319,12 +990,9 @@ int update_process(unsigned int proc_id, unsigned int chunk_id, size_t chunk_siz
 	rqst.id= chunk_id;
 
 	if(clear_flg) {
-
 		//free_chunk(chunk)
 		goto create_chunk;
-
 	}else {
-
 		/*check if chunk with this id already exisits?*/
 	    chunk = find_chunk( rqst.id, proc_obj );	
 	    if(chunk) {	
@@ -338,16 +1006,16 @@ int update_process(unsigned int proc_id, unsigned int chunk_id, size_t chunk_siz
 	}
 
 create_chunk:
-#ifdef LOCAL_DEBUG_FLAG
-    printk("update_process: before create_add_chunk \n");
-#endif
 	if(create_add_chunk(proc_obj, &rqst)){
 		printk("update_process: adding chunk to process failed \n");
 		goto error;
 	}    
 #ifdef LOCAL_DEBUG_FLAG
-	printk("update_process: after create_add_chunk proc_obj->pid  %d, chunk id : %d  \n", proc_obj->pid, rqst.id);
+	printk("update_process: updated  proc_obj->pid  %d, chunk id : %d  \n", proc_obj->pid, rqst.id);
 #endif
+
+	/*Flush cache with fence*/
+	pvm_flush_buffer(proc_obj, sizeof(struct nv_proc_obj),ENABLE_FENCE);
 	return 0;
 
 error:
@@ -417,16 +1085,17 @@ static struct nv_chunk* create_chunk_obj(struct rqst_struct *rqst, struct nv_pro
 #ifdef LOCAL_DEBUG_FLAG
 //	printk "addr %lu  sizeof(chunk) %lu \n", addr, sizeof(chunk));
 #endif
+
+#ifdef NVM_OPTIMIZE_2_3
+    chunk =large_nvstruct_alloc(sizeof(struct nv_chunk));
+    if(!chunk)
+#endif
 	 chunk = kmalloc(sizeof(struct nv_chunk) , GFP_KERNEL);
      if ( !chunk ) {
           printk("create_proc_obj:create_proc_obj failed\n");     
           return NULL;
      }
 
-	if(chunk == NULL) {
-		printk("chunk creation failed\n");
-		return NULL;
-	}
 	chunk->vma_id =  rqst->id;
 	chunk->length = rqst->bytes;
     chunk->proc_id = rqst->pid;
@@ -446,8 +1115,9 @@ static struct nv_chunk* create_chunk_obj(struct rqst_struct *rqst, struct nv_pro
 #ifdef LOCAL_DEBUG_FLAG
 	printk( "Setting offset chunk->vma_id %d \n",chunk->vma_id);
 #endif
-	//current offset of process
-	//*curr_offset = *curr_offset + length;
+
+    /*Flush cache with fence*/
+    pvm_flush_buffer(chunk, sizeof(struct nv_chunk),ENABLE_FENCE);
 	return chunk;
 }
 
@@ -457,35 +1127,6 @@ void delete_nvchunk(struct nv_chunk *chunk) {
 	}
 }
 EXPORT_SYMBOL(delete_nvchunk);
-
-
-/*Method to set the chunk process information*/
-/*static int set_process_chunk(struct nv_chunk *chunk, unsigned int proc_id) {
-
-	if(!chunk){
-		printk( "chunk is null \n");
-		goto error;
-	}
-	//set the info     
-	chunk->proc_id = proc_id;
-	return 0;
-
-	error:
-	return -1;	
-
-}*/
-
-/*Method to get the chunk process information*/
-/*static int get_process_id(struct nv_chunk *chunk) {
-
-	if(!chunk){
-		printk( "chunk is null \n");
-                return -1;
-	}
-	return chunk->proc_id;
-
- }*/
-
 
 /*Function to return the process object to which chunk belongs
 @ chunk: process to which the chunk belongs
@@ -534,7 +1175,6 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 		goto find_chunk_error;
 	}
 
-
     root = &proc_obj->chunk_tree;
 	if(!root){
 		printk("find_chunk: root is null \n");
@@ -552,7 +1192,6 @@ struct nv_chunk* find_chunk( unsigned int vma_id, struct nv_proc_obj *proc_obj) 
 	if(chunk && (chunk->vma_id == vma_id))
 		return chunk;
 #endif
-
 
     while (node) {
         struct nv_chunk *this = rb_entry(node, struct nv_chunk, rb_chunknode);
@@ -626,8 +1265,10 @@ static int add_chunk(struct nv_chunk *chunk, struct nv_proc_obj *proc_obj) {
 	add_to_chunk_cache(chunk, chunk->vma_id);
 #endif
 
-    //set the process obj to which chunk belongs 
+    /*set the process obj to which chunk belongs*/
     chunk->proc_obj = proc_obj;
+    /*Flush cache with fence*/
+    pvm_flush_buffer(chunk, sizeof(struct nv_chunk),ENABLE_FENCE);
     return 0;
 }
 
@@ -796,22 +1437,20 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 	struct nvpage *nvpage = NULL;
 
 #ifdef NVM_OPTIMIZE_2_3
-	nvpage =large_nvstruct_alloc();
+	nvpage =large_nvstruct_alloc(sizeof(struct nvpage));
 	if(!nvpage)
 #endif
-	nvpage = kmalloc(sizeof(struct nvpage) , GFP_KERNEL);
+		nvpage = kmalloc(sizeof(struct nvpage) , GFP_KERNEL);
+
 	if(!nvpage) {
 		printk("insert_page_rbtree: nvpage struct alloc failed \n");
 		return -1;
 	}
-
 	nvpage->page = page;
-
 	if(!(nvpage->page)){
 		printk("insert_page_rbtree: page to insert NULL \n");
 		return -1;
 	}
-
 #ifdef NVM_OPTIMIZE_3
 	struct nvpage *tmpnvpage = NULL;
 	tmpnvpage = insrt_page_cache_node(nvpage->page->nvpgoff, vmaid, procid);
@@ -820,7 +1459,6 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 		*new = &tmpnvpage->rbnode;
 	}
 #endif
-
 	/* Figure out where to put new node */
 	while (*new) {
 
@@ -833,16 +1471,16 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 #endif
 			return -1;
 		}
-
 		if (nvpage->page->nvpgoff < this->page->nvpgoff) {
 			new = &((*new)->rb_left);
+			pvm_flush_buffer(new, CACHELINE_SIZE, ENABLE_FENCE);
 		}else if (nvpage->page->nvpgoff > this->page->nvpgoff){
 			new = &((*new)->rb_right);
+			pvm_flush_buffer(new, CACHELINE_SIZE, ENABLE_FENCE);
 		}else{
 #ifdef LOCAL_DEBUG_FLAG
 			printk("insert_page_rbtree: already exists, do nothing \n");
 #endif
-
 #ifdef NVM_OPTIMIZE_3
 			cache_insrt_procid = procid;
 			cache_insrt_vmaid = vmaid;
@@ -852,13 +1490,13 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 			return 0;
 		}
 	}
-
 	/* Add new node and rebalance tree. */
 	rb_link_node(&nvpage->rbnode, parent, new);
 	rb_insert_color(&nvpage->rbnode, root);
 #ifdef LOCAL_DEBUG_FLAG
 	printk("insert_page_rbtree: success\n");
 #endif
+	pvm_flush_buffer(nvpage, sizeof(struct nvpage), ENABLE_FENCE);
 	return 0;
 }
 
@@ -1098,32 +1736,12 @@ page_chck_error:
 }
 
 
-/* This is needed, because copy_page and memcpy are not usable for copying
- * task structs.
- */
-static inline void do_copy_page(long *dst, long *src)
-{
-        int n;
-
-        for (n = PAGE_SIZE / sizeof(long); n; n--)
-                *dst++ = *src++;
-}
-
-static int safe_copy_page(void *dst, struct page *s_page)
-{
-      if (kernel_page_present(s_page)) { 
-             do_copy_page(dst, page_address(s_page));
-			return 0;	
-	 }else {
-			return UNEXP_ERR;	
-	 }	
- }
 
 struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int pg_off)
 {
 	struct nv_chunk *chunk = NULL;
 	struct page *page = NULL;
-	unsigned int hash=0;
+	//unsigned int hash=0;
 	struct nv_proc_obj *proc_obj;
 
 	if(!proc_id || !chunk_id){
@@ -1162,10 +1780,9 @@ struct page* find_page(unsigned int proc_id, unsigned int chunk_id, unsigned int
 #endif
         goto err_nv_faultpg;
     }
-
 #ifdef LOCAL_DEBUG_FLAG
-	printk("find_page: proc_id %d, chunk_id: %d, hash:%u \n",
-			(int)proc_id, (int)chunk_id, hash);
+	printk("find_page: proc_id %d, chunk_id: %d \n",
+			(int)proc_id, (int)chunk_id);
 #endif
      return page;
 
@@ -1222,9 +1839,6 @@ struct page* get_nv_faultpg(struct vm_area_struct *vma,
 		*err = UNEXP_ERR;
 		goto err_nv_faultpg;
 	}
-
-
-
 	/*get the page from corresponsing offset*/
 	if ( (page = get_page_frm_chunk(chunk, pg_off)) == NULL){
 
@@ -1449,12 +2063,24 @@ asmlinkage long sys_nvpoolcreate( unsigned long num_pool_pages)
     status = alloc_fresh_nv_pages( NULL, num_pool_pages);
     if (!status){
       	intialize_flag = 1;
-        printk("nvpoolcreate: allocation satisfied \n");
 		g_nv_init_pgs += num_pool_pages;
-        return status;
+        goto poolcreate_success;
 	} else {
 		goto error;
 	}
+
+poolcreate_success:
+#ifdef BACKING_STORE
+	nvm_load_from_file(BACKINGFILE);
+#endif
+
+#ifdef NVM_JOURNAL
+	init_transaction_cache();
+#endif
+
+	printk("nvpoolcreate: allocation satisfied \n");
+	return status;
+
 error:  
 	printk("nvpoolcreate: failed\n"); 
     return status;
@@ -1657,28 +2283,17 @@ error:
 //SYSCALL_DEFINE1(NValloc, unsigned long, numpgs)
 asmlinkage long sys_NValloc( unsigned long numpgs)
 {
-	/*if(xen_do_alloc_heteropg(10, 0)){
-		printk("heteromem alloc failed \n");			
-	}else{
-		printk("heteromem alloc succeeded\n");			
-	}*/
 
+#ifndef NOXEN_HETERO
 #ifdef HETEROMEM
    int rc;
    struct page **pages;
    printk(KERN_ALERT "sys_NValloc: numpgs %lu \n",numpgs);
-   /*pages = kmalloc(numpgs*sizeof(struct page), GFP_KERNEL);
-   if (pages == NULL) {
-		printk("sys_NValloc: Allocation failed \n"); 
-        return -ENOMEM;
-	}*/
-   printk(KERN_ALERT "sys_NValloc: kalloc \n");	
-	//send_hotpage_skiplist();
+   
    if(numpgs == 0){
 		alloc_xenheteromemed_pages(numpgs, pages, 1, 1);
 		return 0;
    }	
-
    printk(KERN_ALERT "sys_NValloc: before alloc_xenheteromemed_pages \n");	
 
    rc = alloc_xenheteromemed_pages(numpgs, pages, 1, 0);
@@ -1690,12 +2305,15 @@ asmlinkage long sys_NValloc( unsigned long numpgs)
 	}else {
 		printk("Successfuly allocated pages \n");
 	}
-#else
+   	return 0;
+#endif
+#endif
+
     printk(KERN_ALERT "sys_NValloc: invoking iterate_chunk \n");
 	sys_clear_all_persist(numpgs);
-#endif
 	return 0;	
 }
+
 
 asmlinkage long sys_clear_all_persist( unsigned long proc_id){
 
@@ -1711,9 +2329,7 @@ asmlinkage long sys_clear_all_persist( unsigned long proc_id){
      }
 
 	if(proc_id == 0){
-
-		printk(KERN_ALERT "sys_clear_all_persist: clearing all persistent state \n");
-
+		printk(KERN_ALERT "sys_clear_all_persist:all persistent state \n");
 	    list_for_each_entry_safe( proc_obj,tmp_proc_obj, pos, head_proc) 
 		if ( proc_obj) {
 			iterate_chunk(proc_obj);
@@ -1722,6 +2338,9 @@ asmlinkage long sys_clear_all_persist( unsigned long proc_id){
 					proc_obj->pid);
 #endif
      	}
+#ifdef NVM_OPTIMIZE_2_3
+		large_nvstruct_free();
+#endif
 	}else {
 		proc_obj= find_proc_obj(proc_id);
 	    if(!proc_obj){
@@ -1743,7 +2362,6 @@ endclear:
 struct page *delete_page_rbtree(struct rb_root *root){
 
     struct rb_node *node = root->rb_node;
-    unsigned int offset;
 
     for (node = rb_first(root); node != NULL;
              node = rb_next(node)) {
@@ -1822,7 +2440,6 @@ struct page *clear_page_data(struct rb_root *root){
 }
 
 
-
 /*Function to find the chunk.
 @ process_id: process identifier
 @ var:  variable which we are looking for
@@ -1831,7 +2448,7 @@ struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
 
     struct rb_root *root = NULL;
     struct rb_node *node = NULL; 
-    unsigned int chunkid;
+    //unsigned int chunkid;
    
     root = &proc_obj->chunk_tree;
 	if(!root){
@@ -1851,7 +2468,7 @@ struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
 
 		clear_page_data(&this->page_tree);
 		rb_erase(node, root);
-#ifndef NVM_OPTIMIZE_2
+#ifndef NVM_OPTIMIZE_2_3
 		delete_nvchunk(this);
 #endif
     }
@@ -1862,8 +2479,6 @@ struct nv_chunk* iterate_chunk(struct nv_proc_obj *proc_obj) {
 #endif 
 
 	delete_proc_obj(proc_obj);
-	//printk("iterate_chunk: deleted proc obj and its chunks %u\n", proc_obj->pid);
-
 
 finish_iter:
 #ifdef LOCAL_DEBUG_FLAG_1
@@ -1872,3 +2487,164 @@ finish_iter:
 	return NULL;
 }
 
+/****************************BACKING STORE*********************/
+
+#ifdef BACKING_STORE
+
+static ssize_t nvm_write_backing_store(struct file *flp, char *src,
+        ssize_t bytes, loff_t *woff)
+{
+    mm_segment_t old_fs;
+    ssize_t len = 0;
+
+    if (bytes > 0) {
+        old_fs = get_fs();
+        set_fs(get_ds());
+        len = vfs_write(flp, src, bytes, woff);
+        set_fs(old_fs);
+        if (len <= 0)
+            printk("nvm_write_backing_store: "
+					"Could not write file or corrupted\n");
+    }
+    return len;
+}
+
+static ssize_t nvm_read_backing_store(struct file *flp, char *dest,
+    ssize_t bytes, loff_t *roff)
+{
+    mm_segment_t old_fs;
+    ssize_t len = 0;
+
+    if (bytes > 0) {
+        old_fs = get_fs();
+        set_fs(get_ds());
+        len = vfs_read(flp, dest, bytes, roff);
+        set_fs(old_fs);
+        if (len <= 0)
+            printk("nvm_write_backing_store: "
+					"Could not read file or corrupted\n");
+    }
+    return len;
+}
+
+void nvm_load_from_file(char *nvm_backing_file)
+{
+    struct file *flp;
+    mm_segment_t oldfs;
+
+    if (nvm_backing_file && strlen(nvm_backing_file)) {
+        oldfs = get_fs();
+        set_fs(get_ds());
+        flp = filp_open(nvm_backing_file, O_RDONLY | O_LARGEFILE,
+            S_IRWXU);
+        set_fs(oldfs);
+        if (IS_ERR(flp)) {
+            printk("nvm_load_from_file: failed open %s\n",
+                   nvm_backing_file);
+        } else {
+            printk("nvm_load_from_file: open success %s\n",
+                   nvm_backing_file);
+#if 0
+            pmfs_loadfs(flp, sb);
+            oldfs = get_fs();
+            set_fs(get_ds());
+            filp_close(flp, current->files);
+            set_fs(oldfs);
+#endif
+        }
+    }
+}
+
+#if 0
+static void *nv_frag_start(struct seq_file *m, loff_t *pos)
+{
+    return NULL;
+}
+
+static const struct seq_operations nvmap_info_op = {
+    .start  = nv_frag_start, 
+    .next   = nv_frag_start,
+    .stop   = nv_frag_start,
+    .show   = nv_frag_start,
+};
+
+static int nvmap_open(struct inode *inode, struct file *file)
+{
+    return seq_open(file, &nvmap_info_op);
+}c
+
+
+static const struct file_operations proc_nvmap_operations = {
+    .open       = nvmap_open,
+    .read       = seq_read,
+    .llseek     = seq_lseek,
+    .release    = seq_release,
+};
+
+
+static int __init setup_nvmaps(void)
+{
+#ifdef CONFIG_PROC_FS
+    proc_create("nvmaps", S_IRUGO, NULL, &proc_nvmap_operations);
+#endif
+    return 0;
+}
+module_init(setup_nvmaps)
+#endif
+
+#endif
+
+/****************************BACKING STORE*********************/
+
+/****************************BACKING STORE*********************/
+
+/*****************************UNUSED FUNCTIONS*********************/
+#if 0
+/* This is needed, because copy_page and memcpy are not usable for copying
+* task structs.
+ */
+static inline void do_copy_page(long *dst, long *src)
+{
+        int n;
+
+        for (n = PAGE_SIZE / sizeof(long); n; n--)
+                *dst++ = *src++;
+}
+
+static int safe_copy_page(void *dst, struct page *s_page)
+{
+      if (kernel_page_present(s_page)) { 
+             do_copy_page(dst, page_address(s_page));
+			return 0;	
+	 }else {
+			return UNEXP_ERR;	
+	 }	
+ }
+
+/*Method to set the chunk process information*/
+/*static int set_process_chunk(struct nv_chunk *chunk, unsigned int proc_id) {
+
+	if(!chunk){
+		printk( "chunk is null \n");
+		goto error;
+	}
+	//set the info     
+	chunk->proc_id = proc_id;
+	return 0;
+
+	error:
+	return -1;	
+
+}*/
+
+/*Method to get the chunk process information*/
+/*static int get_process_id(struct nv_chunk *chunk) {
+
+	if(!chunk){
+		printk( "chunk is null \n");
+                return -1;
+	}
+	return chunk->proc_id;
+
+ }*/
+#endif

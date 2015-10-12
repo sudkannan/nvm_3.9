@@ -841,8 +841,9 @@ static bool free_pages_prepare_old(struct page *page, unsigned int order)
 
 			if(test_bit(PG_swapcache, &page->flags))
 				clear_bit(PG_swapcache, &page->flags);*/
-
+#ifndef NOXEN_HETERO
 			add_readylist_setup(page);
+#endif
 			return false;
 		}
 #endif
@@ -871,7 +872,11 @@ static void __free_pages_ok(struct page *page, unsigned int order)
 #ifdef HETEROMEM
     if(page->nvdirty == PAGE_MIGRATED) {
         set_pageblock_migratetype(page, MIGRATE_HETERO);
+
+#ifndef NOXEN_HETERO		
 		hetero_free_hetero();
+#endif	
+
     }
 #endif
 #endif
@@ -1470,7 +1475,7 @@ void mark_free_pages(struct zone *zone)
 }
 #endif /* CONFIG_PM */
 
-
+#ifndef HETEROMEM
 /*
  * Free a 0-order page
  * cold == 1 ? free a cold page : free a hot page
@@ -1555,7 +1560,7 @@ skip:
 out:
 	local_irq_restore(flags);
 }
-
+#endif
 
 
 /*HETERO MEMORY changes*/
@@ -1571,12 +1576,28 @@ void free_hot_cold_page(struct page *page, int cold)
 	struct per_cpu_pages *pcp;
 	unsigned long flags;
 	int migratetype;
+
+#ifdef SETNVMPAGEBIT	
 	struct vm_area_struct *vma;
 	struct mm_struct *mm;
 	char *addr;	
 	int hetroflg;
 
+     /* NVRAM CHANGES do not free nvram pages */
+    if(test_bit(PG_nvram, &page->flags)) {
+		mm = current->mm;
+		addr = page_to_virt(page);
+		vma = find_vma(mm, addr);
+		if(vma && vma->persist_flags == PERSIST_VMA_CLEAR_FLAG){
+			printk("free_hot_cold_page: freeing page \n");
+			goto skip;
+		}		
+       //printk("free_hot_cold_page: nvram flag set \n");
+       return;
+    }
+
 skip:
+#endif
 	if (!free_pages_prepare(page, 0)) {
 		return;
 	}
@@ -1589,7 +1610,9 @@ skip:
 		migratetype = get_pageblock_migratetype(page);
 		set_freepage_migratetype(page, migratetype);
 		//printk(KERN_ALERT "Adding to migratetype %u \n",migratetype);
+#ifndef NOXEN_HETERO
 		hetero_free_hetero();
+#endif
 
 	}else 
 #endif
@@ -6508,9 +6531,9 @@ __alloc_pages_nvram(gfp_t gfp_mask, unsigned int order,
 {
     enum zone_type high_zoneidx = gfp_zone(gfp_mask);
     struct zone *preferred_zone;
-    struct page *page;
+    struct page *page=NULL;
     int migratetype = MIGRATE_HETERO;
-    nodemask_t *nodemask;
+    nodemask_t *nodemask=NULL;
 
     /* Persistence memory changes */
     //if( gfp_mask & __GFP_PERSISTENCE)
