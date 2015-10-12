@@ -339,6 +339,29 @@ uint64_t pvm_get_journal_base(struct nv_proc_obj *sb){
 	return (uint64_t)base;
 }
 
+
+void print_journal(struct nv_proc_obj *sb){
+
+	pmfs_journal_t *journal = sb->journal;
+	if(!journal) {
+		printk(KERN_ALERT "pvm_get_journal_base: sb->journal NULL\n");
+		return;
+	}
+	printk(KERN_ALERT "journal->size %u, "
+		"journal->gen_id %u, journal->head %u, ",
+		journal->size, journal->gen_id, journal->head);
+}
+
+void print_transaction(struct nv_proc_obj *sb, pmfs_transaction_t *trans){
+
+	if(!trans) {
+		printk(KERN_ALERT "print_transaction: trans NULL\n");
+		return;
+	}
+    printk(KERN_ALERT "trans id %d, num_les %d, num_used %x\n",
+        trans->transaction_id, trans->num_entries,trans->num_used);
+}
+
 /*Returns the address of per process journal*/
 pmfs_journal_t *pvm_get_journal(struct nv_proc_obj *sb){
 	return sb->journal;	
@@ -365,6 +388,7 @@ int pvm_journal_hard_init(struct nv_proc_obj *sb, uint64_t base,
 	journal->head = journal->tail = 0;
 	/* lets do Undo logging for now */
 	journal->redo_logging = 0;
+
 #ifdef LOGWRAPAROUND	
 	pmfs_memlock_range(sb, journal, sizeof(*journal));
 	sbi->journal_base_addr = pmfs_get_block(sb, base);
@@ -376,53 +400,42 @@ int pvm_journal_hard_init(struct nv_proc_obj *sb, uint64_t base,
 	return 0;
 }
 
-
-
 pmfs_transaction_t *pvm_new_transaction(struct nv_proc_obj *sb,
         int max_log_entries)
 {
-    /*get per process journal structure*/
-    pmfs_journal_t *journal = pvm_get_journal(sb);
 
-	printk(KERN_ALERT "pvm_new_transaction: Create a new journal \n");
-
-#ifdef LOGWRAPAROUND
-    struct procobj_sb_info *sbi = sb->sb_info;
-#endif
-
-    pmfs_transaction_t *trans;
+   pmfs_transaction_t *trans;
     uint32_t head, tail, req_size, avail_size;
     uint64_t base;
 
+    /*get per process journal structure*/
+    pmfs_journal_t *journal = pvm_get_journal(sb);
+	if(!journal) {
+		printk(KERN_ALERT "journal init failed \n");
+	}
 #ifdef LOGWRAPAROUND
+    struct procobj_sb_info *sbi = sb->sb_info;
     /*PVM Comment it for now*/	
     /* If it is an undo log, need one more log-entry for commit record */
     if (!sbi->redo_log)
         max_log_entries++;
 #endif
-
     trans = pvm_alloc_transaction();
     if (!trans)
         return ERR_PTR(-ENOMEM);
 
     memset(trans, 0, sizeof(*trans));
-
-	printk(KERN_ALERT "pvm_new_transaction: Allocated a new trans\n");
-
     trans->num_used = 0;
     trans->num_entries = max_log_entries;
     trans->t_journal = journal;
     req_size = max_log_entries << LESIZE_SHIFT;
-
 #ifdef LOGWRAPAROUND
     mutex_lock(&sb->journal_mutex);
 #endif
 
     tail = le32_to_cpu(journal->tail);
     head = le32_to_cpu(journal->head);
-
     trans->transaction_id = next_transaction_id++;
-
 again:
     trans->gen_id = le16_to_cpu(journal->gen_id);
 
@@ -445,9 +458,7 @@ again:
         if ((avail_size + freed_size) < req_size)
             goto journal_full;
 #endif
-
     }
-
     base = le64_to_cpu(journal->base) + tail;
     tail = tail + req_size;
 
@@ -479,7 +490,6 @@ again:
     }
     mutex_unlock(&sbi->journal_mutex);
 #endif
-
     avail_size = avail_size - req_size;
 
 #ifdef LOGWRAPAROUND
@@ -490,14 +500,11 @@ again:
     pmfs_dbg_trans("new transaction tid %d nle %d avl sz %x sa %llx\n",
         trans->transaction_id, max_log_entries, avail_size, base);
 #endif
-
-	trans->start_addr = (pmfs_logentry_t *)pvm_get_journal_base(sb);
-
+	trans->start_addr = pvm_get_journal_base(sb);
 #ifdef LOGWRAPAROUND
     trans->start_addr = pmfs_get_block(sb, base);
     trans->parent = (pmfs_transaction_t *)current->journal_info;
     current->journal_info = trans;
-    
 #endif
 
     printk(KERN_ALERT "created new transaction tid %d nle %d avl sz %x sa %llx\n",
@@ -539,9 +546,6 @@ pvm_get_addr_off(struct nv_proc_obj *sb, void *addr)
 static void pvm_flush_transaction(struct nv_proc_obj *sb,
         pmfs_transaction_t *trans)
 {
-
-	printk(KERN_ALERT "Begin pvm_flush_transaction \n");
-
 	if(!trans) {
 		printk(KERN_ALERT "pvm_flush_transaction NULL trans\n");
 		return;
@@ -561,7 +565,6 @@ static void pvm_flush_transaction(struct nv_proc_obj *sb,
 
     for (i = 0; i < trans->num_used; i++, le++) {
         if (le->size) {
-			printk(KERN_ALERT "add le size %x %u\n",le->size, trans->num_used);
             data = pvm_get_dataaddr(sb,le64_to_cpu(le->addr_offset));
 #ifdef LOGWRAPAROUND
             if (sbi->redo_log) {
@@ -598,7 +601,6 @@ static inline void pmfs_commit_logentry(struct nv_proc_obj *sb,
     } else 
 #endif
 	{
-		printk(KERN_ALERT "Begin UNDO trans commit \n");	
         /* Undo Log */
         /* Update the FS in place: currently already done. so
          * only need to clflush */
@@ -610,7 +612,6 @@ static inline void pmfs_commit_logentry(struct nv_proc_obj *sb,
         barrier();
         /* Atomically make the log entry valid */
         le->gen_id = cpu_to_le16(trans->gen_id);
-		printk(KERN_ALERT "Perform buffer flush\n");	
         pvm_flush_buffer(le, LOGENTRY_SIZE, true);
     }
 }
@@ -637,14 +638,13 @@ int pvm_add_logentry(struct nv_proc_obj *sb,
     if (size == 0) {
         /* At least one log entry required for commit/abort log entry */
         if ((type & LE_COMMIT) || (type & LE_ABORT)) {
-			printk(KERN_ALERT "LE_COMMIT transaction\n");
             num_les = 1;
 		}
-    } else
+    } else {
         num_les = (size + sizeof(le->data) - 1)/sizeof(le->data);
-    printk(KERN_ALERT "add le id %d size %x, num_les %d tail %x le %p\n",
-        trans->transaction_id, size, trans->num_entries,
-        trans->num_used, le);
+	}
+
+
 #ifdef LOGWRAPAROUND
     if ((trans->num_used + num_les) > trans->num_entries) {
         pmfs_err(sb, "Log Entry full. tid %x ne %x tail %x size %x\n",
@@ -654,10 +654,9 @@ int pvm_add_logentry(struct nv_proc_obj *sb,
         dump_stack();
         return -ENOMEM;
     }
-#endif
-#ifdef LOGWRAPAROUND
     pmfs_memunlock_range(sb, le, sizeof(*le) * num_les);
 #endif
+
     for (i = 0; i < num_les; i++) {
         le->addr_offset = cpu_to_le64(le_start);
         le->transaction_id = cpu_to_le32(trans->transaction_id);
@@ -694,11 +693,6 @@ int pvm_add_logentry(struct nv_proc_obj *sb,
         le_start += le_size;
         le++;
     }
-    printk(KERN_ALERT "successfuly added "
-		"le id %d size %x, num_les %d tail %x\n",
-        trans->transaction_id, size, trans->num_entries,
-        trans->num_used);
-
 #ifdef LOGWRAPAROUND
     pmfs_memlock_range(sb, le, sizeof(*le) * num_les);
     if (!sbi->redo_log) {
@@ -715,22 +709,18 @@ int pvm_commit_transaction(struct nv_proc_obj *sb, pmfs_transaction_t *trans)
         return 0;
     /* Add the commit log-entry */
     pvm_add_logentry(sb, trans, NULL, 0, LE_COMMIT);
-
-    printk(KERN_ALERT "completing transaction for id %d\n",
-        trans->transaction_id);
 #ifdef LOGWRAPAROUND
     current->journal_info = trans->parent;
 #endif
+    printk(KERN_ALERT "*********************************\n");
+    printk(KERN_ALERT "completing transaction for id %d\n",
+        trans->transaction_id);
+	print_transaction(sb, trans);
+	print_journal(sb);
+    printk(KERN_ALERT "*********************************\n");
     pvm_free_transaction(trans);
     return 0;
 }
-
-
-
-
-
-
-
 
 
 #ifdef NVM_OPTIMIZE_2
@@ -835,6 +825,7 @@ void large_nvstruct_free(void){
 struct nv_proc_obj * create_proc_obj( unsigned int pid ) {
 
    struct nv_proc_obj *proc_obj = NULL;
+   uint64_t base = 0;	
 
 #ifdef NVM_OPTIMIZE_2_3
     proc_obj =large_nvstruct_alloc(sizeof(struct nv_proc_obj));
@@ -851,33 +842,30 @@ struct nv_proc_obj * create_proc_obj( unsigned int pid ) {
    pmfs_transaction_t *trans;
 
     journal = pvm_set_journal(proc_obj);
-	pvm_journal_hard_init(proc_obj, journal,NVMJOURNALSZ);
+	base = pvm_get_journal_base(proc_obj);
+	pvm_journal_hard_init(proc_obj, base,NVMJOURNALSZ);
     //if (IS_ERR(trans))
       //  return PTR_ERR(trans);
 	if((trans =pvm_new_transaction(proc_obj, MAX_LOG_ENTERIES))!= NULL)
-	{
 		printk(KERN_ALERT "Transaction creation success \n");
-	}
 	else {
 		printk(KERN_ALERT "Transaction creation failed \n");
 		goto ret_proc_obj;		
 	}
-
 	/*Add proc obj to log entry*/
 	if(pvm_add_logentry(proc_obj,trans,
-		(void*)proc_obj, sizeof(struct nv_proc_obj), LE_DATA) == 0)
-			printk(KERN_ALERT "Transaction log entry success \n");
-	else
-		printk(KERN_ALERT "Transaction log entry failed\n");
+		(void*)proc_obj, sizeof(struct nv_proc_obj), LE_DATA) != 0)
+			printk(KERN_ALERT "Transaction log entry failed\n");
 #endif
-
 	proc_obj->chunk_initialized = 0;		
 	proc_obj->pid = pid;
 	//RBchunk tree
 	proc_obj->chunk_tree = RB_ROOT;
+
 #ifdef NVM_JOURNAL
 	pvm_commit_transaction(proc_obj, trans);
 #endif
+
 ret_proc_obj:
 	return proc_obj; 
 }
@@ -1279,7 +1267,9 @@ static int add_chunk(struct nv_chunk *chunk, struct nv_proc_obj *proc_obj) {
 static int create_add_chunk(struct nv_proc_obj *proc_obj, struct rqst_struct *rqst) {
 
 	struct nv_chunk *chunk = NULL;
-
+#ifdef NVM_JOURNAL
+	pmfs_transaction_t *trans;
+#endif
 	if(!proc_obj){
 		printk("create_add_chunk: proc_obj invalid \n");		
 		goto add_to_process_error; 
@@ -1290,8 +1280,29 @@ static int create_add_chunk(struct nv_proc_obj *proc_obj, struct rqst_struct *rq
 		printk("create_add_chunk: chunk creating failed \n");		
 		goto add_to_process_error;
 	}
+#ifdef NVM_JOURNAL
+	trans =pvm_new_transaction(proc_obj, MAX_LOG_ENTERIES);
+  	if (IS_ERR(trans))
+  		return PTR_ERR(trans);
+
+    /*Add proc obj to log entry*/
+    if(pvm_add_logentry(proc_obj,trans,
+        (void*)proc_obj, sizeof(struct nv_proc_obj), LE_DATA) != 0)
+            printk(KERN_ALERT "proc_obj log entry failure\n");
+
+	/*Add chunk obj to log entry*/
+    if(pvm_add_logentry(proc_obj,trans,
+        (void*)chunk, sizeof(struct nv_chunk), LE_DATA) != 0)
+            printk(KERN_ALERT "chunk log entry failure \n");
+#endif
+
 	add_chunk(chunk, proc_obj);
     proc_obj->num_chunks++;
+
+#ifdef NVM_JOURNAL
+	pvm_commit_transaction(proc_obj, trans);
+#endif
+
     return 0;
 add_to_process_error:
 	return -1;	
@@ -1426,6 +1437,99 @@ struct nvpage *insrt_page_cache_node(unsigned int nvpgoff,
 
 
 /*add pages to rbtree node */
+int insert_page_rbtree(struct rb_root *root,struct page *page, 
+						struct nv_chunk *chunk){
+
+	struct rb_node **new = &(root->rb_node), *parent = NULL;
+	struct nvpage *nvpage = NULL;
+
+#ifdef NVM_JOURNAL
+    pmfs_transaction_t *trans;
+#endif
+
+#ifdef NVM_OPTIMIZE_2_3
+	nvpage =large_nvstruct_alloc(sizeof(struct nvpage));
+	if(!nvpage)
+#endif
+	nvpage = kmalloc(sizeof(struct nvpage) , GFP_KERNEL);
+	if(!nvpage) {
+		printk("insert_page_rbtree: nvpage struct alloc failed \n");
+		return -1;
+	}
+
+#ifdef NVM_JOURNAL
+    trans =pvm_new_transaction(chunk->proc_obj, MAX_LOG_ENTERIES);
+    if (IS_ERR(trans))
+        return PTR_ERR(trans);
+
+     /*Add chunk obj to log entry*/
+    if(pvm_add_logentry(chunk->proc_obj,trans,
+        (void*)chunk, sizeof(struct nv_chunk), LE_DATA) != 0) {
+            printk(KERN_ALERT "chunk log entry failure \n");
+		goto insert_fail_nvpg;
+	}
+
+    /*Add chunk obj to log entry*/
+    if(pvm_add_logentry(chunk->proc_obj,trans,
+        (void*)nvpage, sizeof(struct nvpage), LE_DATA) != 0) {
+            printk(KERN_ALERT "nvpage log entry failure \n");
+		goto insert_fail_nvpg;
+	}
+#endif
+
+	nvpage->page = page;
+	if(!(nvpage->page)){
+		printk("insert_page_rbtree: page to insert NULL \n");
+		goto insert_fail_nvpg;
+	}
+
+	/* Figure out where to put new node */
+	while (*new) {
+
+		struct nvpage *this = rb_entry(*new, struct nvpage, rbnode);
+		parent = *new;
+
+		if(!this || !this->page) {
+			printk("insert_page_rbtree: chunk rbtree not initialized \n");
+			goto insert_fail_nvpg;
+		}
+		if (nvpage->page->nvpgoff < this->page->nvpgoff) {
+			new = &((*new)->rb_left);
+			pvm_flush_buffer(new, CACHELINE_SIZE, ENABLE_FENCE);
+		}else if (nvpage->page->nvpgoff > this->page->nvpgoff){
+			new = &((*new)->rb_right);
+			pvm_flush_buffer(new, CACHELINE_SIZE, ENABLE_FENCE);
+		}else{
+			goto insert_success_nvpg;
+		}
+	}
+	/* Add new node and rebalance tree. */
+	rb_link_node(&nvpage->rbnode, parent, new);
+	rb_insert_color(&nvpage->rbnode, root);
+
+#ifdef LOCAL_DEBUG_FLAG
+	printk("insert_page_rbtree: success\n");
+#endif
+
+	pvm_flush_buffer(nvpage, sizeof(struct nvpage), ENABLE_FENCE);
+
+insert_success_nvpg:
+#ifdef NVM_JOURNAL
+    pvm_commit_transaction(chunk->proc_obj, trans);
+#endif	
+	return 0;
+
+insert_fail_nvpg:
+#ifdef NVM_JOURNAL
+    pvm_commit_transaction(chunk->proc_obj, trans);
+#endif
+	return -1;
+}
+
+
+#if 0
+/* This version cotains all the optimizations*/
+/*add pages to rbtree node */
 #ifdef NVM_OPTIMIZE_3
 int insert_page_rbtree(struct rb_root *root, struct page *page, 
 						unsigned int vmaid, unsigned int procid){
@@ -1436,16 +1540,37 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 	struct nvpage *nvpage = NULL;
 
+
+#ifdef NVM_JOURNAL
+    pmfs_transaction_t *trans;
+#endif
+
 #ifdef NVM_OPTIMIZE_2_3
 	nvpage =large_nvstruct_alloc(sizeof(struct nvpage));
 	if(!nvpage)
 #endif
-		nvpage = kmalloc(sizeof(struct nvpage) , GFP_KERNEL);
-
+	nvpage = kmalloc(sizeof(struct nvpage) , GFP_KERNEL);
 	if(!nvpage) {
 		printk("insert_page_rbtree: nvpage struct alloc failed \n");
 		return -1;
 	}
+
+#ifdef NVM_JOURNAL
+    trans =pvm_new_transaction(proc_obj, MAX_LOG_ENTERIES);
+    if (IS_ERR(trans))
+        return PTR_ERR(trans);
+
+     /*Add chunk obj to log entry*/
+    if(pvm_add_logentry(proc_obj,trans,
+        (void*)chunk, sizeof(struct nv_chunk), LE_DATA) != 0)
+            printk(KERN_ALERT "chunk log entry failure \n");
+
+
+    /*Add chunk obj to log entry*/
+    if(pvm_add_logentry(proc_obj,trans,
+        (void*)nvpage, sizeof(struct nvpage), LE_DATA) != 0)
+            printk(KERN_ALERT "nvpage log entry failure \n");
+#endif
 	nvpage->page = page;
 	if(!(nvpage->page)){
 		printk("insert_page_rbtree: page to insert NULL \n");
@@ -1499,6 +1624,8 @@ int insert_page_rbtree(struct rb_root *root, struct page *page){
 	pvm_flush_buffer(nvpage, sizeof(struct nvpage), ENABLE_FENCE);
 	return 0;
 }
+#endif
+
 
 #ifdef NVM_OPTIMIZE_1
 unsigned int cache_srch_procid;
@@ -1668,7 +1795,7 @@ int add_pages_to_chunk(struct vm_area_struct *vma, struct page *page, unsigned l
 #ifdef NVM_OPTIMIZE_3
 	if(insert_page_rbtree( &chunk->page_tree, page, chunk_id, proc_id)) {
 #else
-	if(insert_page_rbtree( &chunk->page_tree, page)) {
+	if(insert_page_rbtree( &chunk->page_tree, page, chunk)) {
 #endif
 
 #ifdef LOCAL_DEBUG_FLAG
