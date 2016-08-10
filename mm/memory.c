@@ -135,13 +135,13 @@ spinlock_t nvbiglock;
 #endif
 
 
-#define NOXEN_HETERO
-#ifdef NOXEN_HETERO
+//#define NOXEN_HETERO
+//#ifdef NOXEN_HETERO
 struct page *hetero_alloc_mm(gfp_t gfp, int order, int node);
 void hetero_add_to_nvlist_mm(struct page *page);
 struct page *hetero_getnxt_io_page_mm(bool prefer_highmem);
 struct page *hetero_alloc_IO_mm(gfp_t gfp, int order, int node);
-#endif
+//#endif
 
 int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages);
 int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
@@ -5818,7 +5818,7 @@ EXPORT_SYMBOL(init_proc_nvpages);
 
 
 
-#ifdef NOXEN_HETERO
+//#ifdef NOXEN_HETERO
 static spinlock_t heterolock;
 /*hetero used page list count*/
 static unsigned int nr_used_lst_pgcnt;
@@ -5945,7 +5945,7 @@ void hetero_add_to_nvlist_mm(struct page *page){
 }
 EXPORT_SYMBOL(hetero_add_to_nvlist_mm);
 
-#endif
+//#endif
 
 
 

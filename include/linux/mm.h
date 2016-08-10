@@ -3,7 +3,6 @@
 
 #include <linux/errno.h>
 
-//#define RANDOMHETERO
 
 #ifdef __KERNEL__
 
@@ -19,9 +18,6 @@
 #include <linux/pfn.h>
 #include <linux/bit_spinlock.h>
 #include <linux/shrinker.h>
-
-
-#define NOXEN_HETERO
 
 struct mempolicy;
 struct anon_vma;
@@ -119,6 +115,9 @@ extern unsigned int kobjsize(const void *objp);
 
 #define HETEROMEM
 //#define XEN_HETEROMEM_FAKENUMA
+//#define NOXEN_HETERO
+//#define RANDOMHETERO
+
 
 
 #if defined(CONFIG_X86)
