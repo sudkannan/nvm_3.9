@@ -863,6 +863,7 @@ struct nv_proc_obj * create_proc_obj( unsigned int pid ) {
 	proc_obj->chunk_tree = RB_ROOT;
 
 #ifdef NVM_JOURNAL
+	printk(KERN_ALERT "proc_obj finished transaction\n");
 	pvm_commit_transaction(proc_obj, trans);
 #endif
 
@@ -1300,6 +1301,7 @@ static int create_add_chunk(struct nv_proc_obj *proc_obj, struct rqst_struct *rq
     proc_obj->num_chunks++;
 
 #ifdef NVM_JOURNAL
+	printk(KERN_ALERT "chunk pvm_commit_transaction\n");
 	pvm_commit_transaction(proc_obj, trans);
 #endif
 
@@ -1443,7 +1445,7 @@ int insert_page_rbtree(struct rb_root *root,struct page *page,
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 	struct nvpage *nvpage = NULL;
 
-#ifdef NVM_JOURNAL
+#ifdef NVM_NOJOURNAL
     pmfs_transaction_t *trans;
 #endif
 
@@ -1457,7 +1459,7 @@ int insert_page_rbtree(struct rb_root *root,struct page *page,
 		return -1;
 	}
 
-#ifdef NVM_JOURNAL
+#ifdef NVM_NOJOURNAL
     trans =pvm_new_transaction(chunk->proc_obj, MAX_LOG_ENTERIES);
     if (IS_ERR(trans))
         return PTR_ERR(trans);
@@ -1514,18 +1516,18 @@ int insert_page_rbtree(struct rb_root *root,struct page *page,
 	pvm_flush_buffer(nvpage, sizeof(struct nvpage), ENABLE_FENCE);
 
 insert_success_nvpg:
-#ifdef NVM_JOURNAL
+#ifdef NVM_NOJOURNAL
+	printk(KERN_ALERT "nvpage pvm_commit_transaction\n");
     pvm_commit_transaction(chunk->proc_obj, trans);
 #endif	
 	return 0;
 
 insert_fail_nvpg:
-#ifdef NVM_JOURNAL
+#ifdef NVM_NOJOURNAL
     pvm_commit_transaction(chunk->proc_obj, trans);
 #endif
 	return -1;
 }
-
 
 #if 0
 /* This version cotains all the optimizations*/
