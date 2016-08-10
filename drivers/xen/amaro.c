@@ -8,8 +8,8 @@
 
 #include <xen/amaro.h>
 
-#define MAX_HOT_MFN 32000
-#define NUM_SHARED_PAGES 32
+#define MAX_HOT_MFN 128000
+#define NUM_SHARED_PAGES 128
 
 void *vaddrs[NUM_SHARED_PAGES];
 unsigned long mfns[NUM_SHARED_PAGES];
@@ -25,6 +25,7 @@ static void free_shared_pages(void);
 #define READ_PERFCOUNT 1
 
 struct perf_ctrs *perfcntr;
+struct hetero_params *tmphetparam;
 struct perf_ctrs p_cores_sum;
 struct perf_ctrs prev_cores_sum;
 spinlock_t perfrd_lock;
@@ -95,15 +96,49 @@ static int alloc_shared_pages(void)
     return 0;
 }
 
+
+int init_hetero_params(unsigned int hot_scan_freq,
+      unsigned int hot_scan_limit,
+      unsigned int hot_shrink_freq,
+      unsigned int usesharedmem) {
+
+	int ret=0;
+	GUEST_HANDLE(hetero_params) xen_guest_handle_hetero_params;
+
+	if(!tmphetparam) {
+		tmphetparam = kzalloc(sizeof(struct hetero_params), GFP_KERNEL);
+		if(!tmphetparam){
+			printk(KERN_ALERT "perfcntr alloc failed \n");
+			return -1;
+		}
+	}
+
+	tmphetparam->clock_period_ms=hot_scan_freq;
+	tmphetparam->shrink_freq= hot_shrink_freq;
+	tmphetparam->max_hot_scan=hot_scan_limit;
+	tmphetparam->max_temp_hot_scan=hot_scan_limit/2;
+	tmphetparam->usesharedmem=usesharedmem;
+
+	set_xen_guest_handle(xen_guest_handle_hetero_params, tmphetparam);
+    if ((ret = HYPERVISOR_set_hetero_param_op(0, xen_guest_handle_hetero_params)) < 0)
+	//if ((ret = HYPERVISOR_set_hetero_param_op(0, tmphetparam)) < 0)
+    {
+      	printk("ERROR, set_hetero_param_op(() returned: %ld\n", ret);
+    }
+
+	return ret;
+}
+
 int reset_perf_counters(void)
 {
 	int ret, count;
 	static struct perf_ctrs tmpperfcntr;
-	//GUEST_HANDLE(perf_ctrs) xen_guest_handle_perfctr;
-	//set_xen_guest_handle(xen_guest_handle_perfctr, &tmpperfcntr);
 
+<<<<<<< HEAD
 	//printk("Tot INSTS: %lu Tot CYCLES: %lu Tot LLCMISSES: %lu \n",
 	  //    p_cores_sum.instns, p_cores_sum.cycles, p_cores_sum.lmisses);
+=======
+>>>>>>> b951cd246cd02adaf9dce69807bf314201a3cab8
 
 	prev_cores_sum.instns = p_cores_sum.instns;
 	prev_cores_sum.cycles = p_cores_sum.cycles;
@@ -136,6 +171,7 @@ int get_perf_counters(void)
 			printk(KERN_ALERT "perfcntr alloc failed \n");
 			return -1;
 		}
+
 	}
 	set_xen_guest_handle(xen_guest_handle_perfctr, perfcntr);
 
@@ -181,10 +217,25 @@ int print_perf_counters(void)
 }
 EXPORT_SYMBOL(print_perf_counters);
 
+<<<<<<< HEAD
 
 void perf_set_test_arg(unsigned long arg){
 
 	LLC_MISS_MIGRATE_THRESHOLD = arg;
+=======
+void perf_set_test_arg(unsigned long arg,
+                         unsigned int hot_scan_freq,
+                         unsigned int hot_scan_limit,
+                         unsigned int hot_shrink_freq,
+                         unsigned int usesharedmem)
+{
+
+	LLC_MISS_MIGRATE_THRESHOLD = arg;
+	//Perform hetero initialization
+	init_hetero_params(hot_scan_freq, hot_scan_limit, 
+						hot_shrink_freq, usesharedmem);
+
+>>>>>>> b951cd246cd02adaf9dce69807bf314201a3cab8
 }
 EXPORT_SYMBOL(perf_set_test_arg);
 
@@ -208,7 +259,11 @@ int MigrationEnable(){
 		return 1;
 	}else{
 		diff = prev_cores_sum.lmisses - p_cores_sum.lmisses;
+<<<<<<< HEAD
 		if(p_cores_sum.lmisses && (diff/p_cores_sum.lmisses*100 > 10)){
+=======
+		if(p_cores_sum.lmisses && (diff/ p_cores_sum.lmisses*100 > 100)){
+>>>>>>> b951cd246cd02adaf9dce69807bf314201a3cab8
 
 			printk("diff %lu, p_cores_sum.lmisses %lu, prev_cores_sum.lmisses %lu \n",
 				diff, p_cores_sum.lmisses, prev_cores_sum.lmisses);
@@ -269,11 +324,18 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
 #ifdef READ_PERF_CNTRS
 	get_perf_counters();
 
+<<<<<<< HEAD
 	//if(!MigrationEnable()){
 	//	*hotcnt =0;
 	//	return frame_list;
 	//}
 	print_perf_counters();
+=======
+	if(!MigrationEnable()){
+		*hotcnt =0;
+		return frame_list;
+	}
+>>>>>>> b951cd246cd02adaf9dce69807bf314201a3cab8
 	//reset_perf_counters();
 #endif
 
@@ -300,9 +362,16 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
             f = (void *)(((unsigned long)curr_base_vaddr) + offset);
 
             if (f->mfn == 0) {
+
+				 /*curr_base_vaddr = vaddrs[0];
+				 offset = 0;
+				 f = (void *)(((unsigned long)curr_base_vaddr) + offset);
+				 f->mfn = 0;*/
+
                 //*hotcnt = pidx * frames_ppage + fidx;
                	//printk("hotcnt = %u fidx=%u pidx=%u "
 				//		"frames_ppage=%u\n", *hotcnt, fidx, pidx, frames_ppage);
+
                 return frame_list;
             }
 			frame_list[pidx * frames_ppage + fidx] = f->mfn;

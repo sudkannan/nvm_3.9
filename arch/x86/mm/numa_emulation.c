@@ -8,6 +8,8 @@
 #include <linux/bootmem.h>
 #include <asm/dma.h>
 
+#include <linux/mm.h>
+
 #include "numa_internal.h"
 
 static int emu_nid_to_phys[MAX_NUMNODES] __cpuinitdata;
@@ -95,12 +97,32 @@ static int __init split_nodes_interleave(struct numa_meminfo *ei,
 		nr_nodes = MAX_NUMNODES;
 	}
 
+#ifdef XEN_HETEROMEM_FAKENUMA
+	printk(KERN_ALERT "Trying to emualte nr_nodes %d \n",nr_nodes);
+#endif
+
 	/*
 	 * Calculate target node size.  x86_32 freaks on __udivdi3() so do
 	 * the division in ulong number of pages and convert back.
 	 */
 	size = max_addr - addr - mem_hole_size(addr, max_addr);
+
+#ifdef XEN_HETEROMEM_FAKENUMA
+	printk(KERN_ALERT "max_addr %lu, "
+			"addr %lu, "
+			"mem_hole_size(addr, max_addr) %lu, "
+			"size %lu, \n",
+			max_addr, addr, mem_hole_size(addr, max_addr), size);
+#endif
+
 	size = PFN_PHYS((unsigned long)(size >> PAGE_SHIFT) / nr_nodes);
+
+#ifdef XEN_HETEROMEM_FAKENUMA
+	printk(KERN_ALERT "size %lu, "
+			"(unsigned long)(size >> PAGE_SHIFT) %lu, "
+			"PFN_PHYS((unsigned long)(size >> PAGE_SHIFT)/nr_nodes)  %lu \n ",
+			size, (unsigned long)(size >> PAGE_SHIFT), PFN_PHYS((unsigned long)(size >> PAGE_SHIFT)/nr_nodes));
+#endif
 
 	/*
 	 * Calculate the number of big nodes that can be allocated as a result
@@ -108,6 +130,18 @@ static int __init split_nodes_interleave(struct numa_meminfo *ei,
 	 */
 	big = ((size & ~FAKE_NODE_MIN_HASH_MASK) * nr_nodes) /
 		FAKE_NODE_MIN_SIZE;
+
+#ifdef XEN_HETEROMEM_FAKENUMA
+	printk(KERN_ALERT "Trying to emualte big nodes %d, "
+			"Pages %lu, "
+			"FAKE_NODE_MIN_HASH_MASK %u, "
+			"size & ~FAKE_NODE_MIN_HASH_MASK %u, "
+			"FAKE_NODE_MIN_SIZE %u ," 
+			"nr_nodes %u \n",
+			big, size, FAKE_NODE_MIN_HASH_MASK, 
+			size & ~FAKE_NODE_MIN_HASH_MASK, FAKE_NODE_MIN_SIZE, 
+			nr_nodes);
+#endif
 
 	size &= FAKE_NODE_MIN_HASH_MASK;
 	if (!size) {
@@ -317,6 +351,8 @@ void __init numa_emulation(struct numa_meminfo *numa_meminfo, int numa_dist_cnt)
 	int max_emu_nid, dfl_phys_nid;
 	int i, j, ret;
 
+	printk(KERN_ALERT "CALLING NUMA EMULATION \n");
+
 	if (!emu_cmdline)
 		goto no_emu;
 
@@ -333,14 +369,20 @@ void __init numa_emulation(struct numa_meminfo *numa_meminfo, int numa_dist_cnt)
 	 */
 	if (strchr(emu_cmdline, 'M') || strchr(emu_cmdline, 'G')) {
 		u64 size;
-
 		size = memparse(emu_cmdline, &emu_cmdline);
 		ret = split_nodes_size_interleave(&ei, &pi, 0, max_addr, size);
 	} else {
 		unsigned long n;
 
+#ifdef XEN_HETEROMEM_FAKENUMA
+		n=2;
+		printk(KERN_ALERT "Setting numa faking to %lu \n",n); //emu_cmdline);
+		u64 size = 1024*1024*1024*2;
+		ret = split_nodes_size_interleave(&ei, &pi, 0, max_addr, size);
+#else
 		n = simple_strtoul(emu_cmdline, &emu_cmdline, 0);
 		ret = split_nodes_interleave(&ei, &pi, 0, max_addr, n);
+#endif
 	}
 	if (*emu_cmdline == ':')
 		emu_cmdline++;

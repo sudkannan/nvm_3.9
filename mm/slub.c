@@ -34,6 +34,7 @@
 #include <linux/memcontrol.h>
 
 #include <trace/events/kmem.h>
+#include <xen/heteromem.h>
 
 #include "internal.h"
 
@@ -1261,6 +1262,24 @@ static inline struct page *alloc_slab_page(gfp_t flags, int node,
 {
 	int order = oo_order(oo);
 
+//#ifdef HETEROMEM
+#if 0
+	struct page *page = NULL;
+
+    if(current && current->heteroflag == PF_HETEROMEM) {
+       	printk(KERN_ALERT "alloc_slab_page called \n");
+
+		flags |= __GFP_NOTRACK;
+
+		//if (node == NUMA_NO_NODE)
+		page = hetero_alloc_hetero (flags, node, order);
+		if(page) 
+			return page;
+		else
+			return alloc_pages_exact_node(node, flags, order);
+    }
+#endif
+
 	flags |= __GFP_NOTRACK;
 
 	if (node == NUMA_NO_NODE)
@@ -2223,6 +2242,25 @@ static void *__slab_alloc(struct kmem_cache *s, gfp_t gfpflags, int node,
 	if (!page)
 		goto new_slab;
 redo:
+
+//#ifdef HETEROMEM
+#if 0
+     /*HETERO MEMORY changes*/
+    if(current && current->heteroflag == PF_HETEROMEM) {
+        /*check if hetero page if not just alocate hetero page*/
+        if(page && page->nvdirty != PAGE_MIGRATED) {
+			if(freelist){
+    	       deactivate_slab(s, page, c->freelist);
+	           c->freelist = NULL;
+			}else {
+				 stat(s, DEACTIVATE_BYPASS);
+			}
+		    c->page = NULL;
+			//printk(KERN_ALERT "redirecting to new_slab\n");
+            goto new_slab;
+        }
+    }
+#endif
 
 	if (unlikely(!node_match(page, node))) {
 		stat(s, ALLOC_NODE_MISMATCH);

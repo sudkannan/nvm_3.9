@@ -40,6 +40,7 @@
 
 #include <linux/kernel_stat.h>
 #include <linux/mm.h>
+#include <linux/nvstruct.h>
 #include <linux/hugetlb.h>
 #include <linux/mman.h>
 #include <linux/swap.h>
@@ -70,6 +71,7 @@
 #include "internal.h"
 
 /*Xen HETEROMEM related changes*/
+#if 0
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
 #include <xen/xen.h>
@@ -79,6 +81,7 @@
 #include <xen/heteromem.h>
 #include <xen/features.h>
 #include <xen/page.h>
+#endif
 
 //#define HETEROMEM_GREEDY_ALLOCATE /*Allocate from hetero pages*/
 #define SETNVMPAGEBIT 
@@ -86,12 +89,14 @@
 //#define _BIGNV_LOCK
 #define _NV_LOCKS
 #define PG_reuse 9
+#define PERSISTENT_MEM_NODE 0
 
-static unsigned int del_dirtypgcnt;
 //#define NV_JIT_ALLOC
 //#define HETERO_JIT
 //#define LOCAL_DEBUG_FLAG
 //#define DEBUG_STATS
+
+
 /*---Global variales--*/
 __cacheline_aligned_in_smp DEFINE_SPINLOCK(nv_pagelist_lock);
 extern unsigned int g_nv_init_pgs;
@@ -124,21 +129,24 @@ unsigned long alloc_nvpages_cnt;
 struct pmem_map_struct *pmem_map;
 //count to indicate the total number of entry's in pmem_map
 static unsigned int  map_cnt =0;
-struct page *temp_del_page = NULL;
 
 #ifdef _BIGNV_LOCK
 spinlock_t nvbiglock;
+#endif
+
+
+#define NOXEN_HETERO
+#ifdef NOXEN_HETERO
+struct page *hetero_alloc_mm(gfp_t gfp, int order, int node);
+void hetero_add_to_nvlist_mm(struct page *page);
+struct page *hetero_getnxt_io_page_mm(bool prefer_highmem);
+struct page *hetero_alloc_IO_mm(gfp_t gfp, int order, int node);
 #endif
 
 int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages);
 int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		unsigned long address, pte_t *page_table, pmd_t *pmd,
 		unsigned int flags);
-
-static int do_anonymous_page_node(struct mm_struct *mm, struct vm_area_struct *vma,
-        unsigned long address, pte_t *page_table, pmd_t *pmd,
-        unsigned int flags);
-
 
 static struct page *nv_alloc_page_numa( struct vm_area_struct *vma);
 struct page* getnvpage(struct vm_area_struct *vma );
@@ -3419,9 +3427,49 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
 
+#ifdef RANDOMHETERO
+	page = alloc_zeroed_user_highpage_movable(vma, address);
+	if(page){
+		if(page->nvdirty == PAGE_MIGRATED){
+			//increment_hetero_alloc_hit();
+			printk(KERN_ALERT "PAGE_MIGRATED \n");
+			clear_user_highpage(page, address);
+		}else{
+			increment_hetero_alloc_miss();
+		}
+		goto setpageupdate;
+	}else {
+		increment_hetero_alloc_miss();
+	}
+#endif
+
+#ifndef RANDOMHETERO	
+#ifdef HETEROMEM
+	if(current && current->heteroflag == PF_HETEROMEM){
+       page = NULL;
+	   page = hetero_alloc_mm(GFP_HIGHUSER_MOVABLE |__GFP_ZERO, 0, 0);
+	   if(page){
+		    if(page->nvdirty == PAGE_MIGRATED){
+			    clear_user_highpage(page, address);
+				page->nvdirty = PAGE_MIGRATED;
+				hetero_add_to_nvlist_mm(page);
+			}
+			goto setpageupdate;
+		}else {
+			printk(KERN_ALERT "memory.c: hetero_alloc_mm failed\n");
+		}
+	}
+#endif
+#endif
+
 	page = alloc_zeroed_user_highpage_movable(vma, address);
 	if (!page)
 		goto oom;
+
+	//if(page_to_nid(page))
+	//printk(KERN_ALERT "page_to_nodeid %d \n",page_to_nid(page));	
+
+setpageupdate:
 	__SetPageUptodate(page);
 
 	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
@@ -3456,91 +3504,6 @@ oom:
 }
 
 
-
-/*
- * We enter with non-exclusive mmap_sem (to exclude vma changes,
- * but allow concurrent faults), and pte mapped but not yet locked.
- * We return with mmap_sem still held, but pte unmapped and unlocked.
- */
-static int do_anonymous_page_node(struct mm_struct *mm, struct vm_area_struct *vma,
-		unsigned long address, pte_t *page_table, pmd_t *pmd,
-		unsigned int flags)
-{
-	struct page *page;
-	spinlock_t *ptl;
-	pte_t entry;
-	unsigned int order;
-
-	pte_unmap(page_table);
-
-	/* Check if we need to add a guard page to the stack */
-	if (check_stack_guard_page(vma, address) < 0)
-		return VM_FAULT_SIGBUS;
-
-	/* Use the zero-page for reads */
-	if (!(flags & FAULT_FLAG_WRITE)) {
-		entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
-						vma->vm_page_prot));
-		page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
-		if (!pte_none(*page_table))
-			goto unlock;
-		goto setpte;
-	}
-
-	/* Allocate our own private page. */
-	if (unlikely(anon_vma_prepare(vma)))
-		goto oom;
-
-	//page = alloc_zeroed_user_highpage_movable(vma, address);
-	//printk(KERN_ALERT "allocating from persistent node \n");
-	//page = nv_alloc_fresh_page_node(find_persistent_node(),PAGE_SIZE);
-	order = get_order(PAGE_SIZE);
-    page = alloc_pages_exact_node(find_persistent_node(),  GFP_HIGHUSER_MOVABLE |__GFP_ZERO|GFP_THISNODE, order);
-	if (!page)
-		goto oom;
-
-	__SetPageUptodate(page);
-
-#ifdef DEBUG_STATS
-	  if(test_bit(PG_nvram, &page->flags))	
-		printk("NVM bit is already set \n");
-
-      non_persist_pages++;
-      //printk("total non_persist_pages %u \n",non_persist_pages);
-#endif
-
-       set_bit(PG_nvram, &page->flags);
-
-	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
-		goto oom_free_page;
-
-	entry = mk_pte(page, vma->vm_page_prot);
-	if (vma->vm_flags & VM_WRITE)
-		entry = pte_mkwrite(pte_mkdirty(entry));
-
-	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
-	if (!pte_none(*page_table))
-		goto release;
-
-	inc_mm_counter_fast(mm, MM_ANONPAGES);
-	page_add_new_anon_rmap(page, vma, address);
-setpte:
-	set_pte_at(mm, address, page_table, entry);
-
-	/* No need to invalidate - it was non-present before */
-	update_mmu_cache(vma, address, page_table);
-unlock:
-	pte_unmap_unlock(page_table, ptl);
-	return 0;
-release:
-	mem_cgroup_uncharge_page(page);
-	page_cache_release(page);
-	goto unlock;
-oom_free_page:
-	page_cache_release(page);
-oom:
-	return VM_FAULT_OOM;
-}
 
 /*
  * __do_fault() tries to create a new page mapping. It aggressively
@@ -3991,22 +3954,15 @@ int handle_pte_fault(struct mm_struct *mm,
 						pte, pmd, flags, entry);
 			}
 
-             //NVRAM  changes 
-		     if ( vma->persist_flags == PERSIST_VMA_FLAG ) {
-#ifdef LOCAL_DEBUG_FLAG
-				printk("=======================================\n");
-    	        printk("handle_pte_fault: do_anonymous_nvmem_page \n");
+#ifdef RANDOMHETERO 	
+			return do_anonymous_page(mm, vma, address,pte, pmd, flags);
 #endif
+             //NVRAM  changes 
+		   if ( vma->persist_flags == PERSIST_VMA_FLAG ) {
         	    ret = do_anonymous_nvmem_page(mm, vma, address,
                                   		 pte, pmd, flags);     
-				//return do_anonymous_page_node(mm, vma, address,
-				//			 pte, pmd, flags);
-
-#ifdef LOCAL_DEBUG_FLAG
-				printk("=======================================\n");
-#endif
 				return ret;				
-		     }else {
+		    }else {
 				return do_anonymous_page(mm, vma, address,
 							 pte, pmd, flags);
 			}
@@ -4793,9 +4749,9 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct page *page = NULL;
 	spinlock_t *ptl;
 	pte_t entry;
-    struct nv_proc_obj *proc_obj;
 	int err = 0,page_reuse=0;
 	int write_fault=0;
+
 
 	pte_unmap(page_table);
 
@@ -4837,6 +4793,7 @@ write_fault:
 		goto oom;
 
         page = NULL;
+<<<<<<< HEAD
 		page = hetero_getnxt_page(false);
 		if(!page){
 			page = alloc_zeroed_user_highpage_movable(vma, address);
@@ -4848,6 +4805,194 @@ write_fault:
 			page->nvdirty = PAGE_MIGRATED;	
 			page_reuse=1;
 		}
+#if 0
+=======
+
+>>>>>>> b951cd246cd02adaf9dce69807bf314201a3cab8
+		if(!vma->noPersist) {
+
+			//printk(KERN_ALERT "using persist vma \n");	
+		    page = get_nv_faultpg(vma, address, &err);
+
+			if(!page) {
+				page =  nv_alloc_page_numa( vma);
+				if(page){
+				   set_bit(PG_nvram, &page->flags);
+				   set_bit(PG_locked, &page->flags);	
+				   atomic_inc(&page->_count);
+				   add_pages_to_chunk( vma, page, address);
+				}
+
+			}else {
+				atomic_inc(&page->_count);
+				set_bit(PG_nvram, &page->flags);
+				page_reuse=1;
+			}
+		}else {
+#ifdef HETEROMEM
+			/*If we use hetero support, for nonpersistent memory alloc
+			 * We just call the hetero alloc function 
+			 * We don't care about the node, handled by the callee*/
+			page = hetero_alloc_mm(GFP_HIGHUSER_MOVABLE |__GFP_ZERO, 0, 0);		
+#else			
+			/*we require no persistent pages from NVRAM*/
+			page =  nv_alloc_page_numa( vma);
+			if(page){
+#ifndef NV_JIT_ALLOC	
+			set_bit(PG_nvram, &page->flags);
+#endif
+			}
+#endif
+			/*All allocation failed. Revert to regular allocation*/
+			if(!page) {
+				page = alloc_zeroed_user_highpage_movable(vma, address);
+			}
+		}
+#endif
+
+#if 0 //Not used currently
+update_pgtable:	
+#endif
+		if (!page){
+                printk("do_anonymous_nvmem_page: "
+						"page allocation/read failed \n");
+			goto oom;
+         }
+
+        /*set the page update flag holding the smp_wmb(); */
+	__SetPageUptodate(page);
+
+#if 1		
+	if(!(page->nvdirty)){
+
+		page->nvdirty = PG_reuse;
+        /*charges the memory controller for the page obtained */
+        /*on success returns 0 or else failure */
+		if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
+			goto oom_free_page;
+	}
+#endif
+
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty(entry));
+
+	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+	if (!pte_none(*page_table))
+		goto release;
+        
+	if(!page_reuse)
+		inc_mm_counter_fast(mm, MM_ANONPAGES);
+
+	page_add_new_anon_rmap(page, vma, address);
+
+setpte:
+	set_pte_at(mm, address, page_table, entry);
+	/* No need to invalidate - it was non-present before */
+	update_mmu_cache(vma, address, page_table);
+unlock:
+	pte_unmap_unlock(page_table, ptl);
+	return 0;
+release:
+	mem_cgroup_uncharge_page(page);
+	page_cache_release(page);
+
+	goto unlock;
+
+oom_free_page:
+	page_cache_release(page);
+oom:
+	return VM_FAULT_OOM;
+}
+
+
+#if 0
+
+//#TEST CODE
+/*
+ * We enter with non-exclusive mmap_sem (to exclude vma changes,
+ * but allow concurrent faults), and pte mapped but not yet locked.
+ * We return with mmap_sem still held, but pte unmapped and unlocked.
+ */
+int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, pte_t *page_table, pmd_t *pmd,
+		unsigned int flags)
+{
+	struct page *page = NULL;
+	spinlock_t *ptl;
+	pte_t entry;
+    struct nv_proc_obj *proc_obj;
+	int err = 0,page_reuse=0;
+	int write_fault=0;
+
+	pte_unmap(page_table);
+
+	/* Check if we need to add a guard page to the stack */
+	if (check_stack_guard_page(vma, address) < 0){
+		 if (vma &&  vma->persist_flags == PERSIST_VMA_FLAG )
+			         printk("SIGBUS in do_anonymous_nvmem_page\n");
+		return VM_FAULT_SIGBUS;
+	}
+
+
+	 /* Use the zero-page for reads */
+	 if (!(flags & FAULT_FLAG_WRITE)) {
+		 entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
+						 vma->vm_page_prot));
+		 page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+		 if (!pte_none(*page_table))
+			 goto unlock;
+		 goto setpte;
+	 }
+
+
+#if 0
+    /* Use the zero-page for reads */
+    if (!(flags & FAULT_FLAG_WRITE)) {
+#if 0
+        entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
+                        vma->vm_page_prot));
+        page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+        if (!pte_none(*page_table))
+            goto unlock;
+        goto setpte;
+#endif
+
+	/* Allocate our own private page. */
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+		page = get_nv_faultpg(vma, address, &err);
+		if(page){
+			atomic_inc(&page->_count);
+			page_reuse=1;
+			goto update_pgtable;
+		}
+    }
+#endif
+
+write_fault:
+	/* Allocate our own private page. */
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+        page = NULL;
+		//page = hetero_getnxt_page(false);
+		page = hetero_alloc_mm(GFP_PERSISTENCE, 0, 0);
+		//page = nv_alloc_page_numa(vma);
+		if(!page){
+			page = alloc_zeroed_user_highpage_movable(vma, address);
+			if(!page) {	
+				goto oom;
+			}
+		}else {
+			//set_bit(PG_hetero, &page->flags);
+			page->nvdirty = PAGE_MIGRATED;	
+			page_reuse=1;
+		}
+
+		if(page->nvdirty == PAGE_MIGRATED)	
+			clear_user_highpage(page, address);
 #if 0
 		if(!vma->noPersist) {
 			//printk(KERN_ALERT "using persist vma \n");	
@@ -4944,7 +5089,6 @@ oom:
 }
 
 
-#if 0
 
 #ORIGINAL CODE WITHOUT OPTIMIZATION
 
@@ -4963,7 +5107,7 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
     //FIXME: NEEDS TO BE CHANGED IN A NUMA MACHINE        
     struct nv_proc_obj *proc_obj;
 	int err = 0,page_reuse=0;
-	int write_fault=0;
+	//int write_fault=0;
 
 #ifdef DEBUG_TIMER
    long temp_time = 0;
@@ -5019,9 +5163,9 @@ int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		
 	}
 //}
+write_fault:
 #endif
 
-write_fault:
 	/* Allocate our own private page. */
 	if (unlikely(anon_vma_prepare(vma)))
 		goto oom;
@@ -5226,6 +5370,8 @@ int refill_nvpages(void){
 }
 
 #ifdef HETEROMEM
+
+#if 0
 struct page* getnvpage(struct vm_area_struct *vma ) {
 
 	struct page *page = NULL;
@@ -5242,12 +5388,15 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 		//printk("KERN_ALERT getting heteropage failed \n");
 		goto getnvpage_err;
 	}
+
+#if 0	
 	page->nvdirty = PAGE_MIGRATED;
 	set_bit(PG_hetero, &page->flags);
-
-#ifdef LOCAL_DEBUG_FLAG
-	 printk(KERN_DEBUG "Success: using page from hetero\n");
 #endif
+
+	/*HETERO MEMORY changes*/
+	//page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
+
 #ifdef _NV_LOCKS
 	spin_unlock(&nvpagelock);
 #endif
@@ -5260,7 +5409,107 @@ getnvpage_err:
 	return NULL; 
 }
 EXPORT_SYMBOL(getnvpage);
+#endif
 
+struct page* getnvpage(struct vm_area_struct *vma ) {
+
+	struct page *page = NULL, *tmp = NULL;
+
+#ifdef NV_JIT_ALLOC	
+    int nodeid=0;
+#endif
+
+	BUG_ON(!vma);
+
+#ifdef _NV_LOCKS
+	spin_lock(&nvpagelock);
+#endif
+
+#ifdef NV_JIT_ALLOC
+	goto get_frm_jit_alloc;
+#else
+	if(!g_nvlistinit) {	
+		 printk("getnvpage: list not intialized \n");
+		 goto page_error;
+	}
+
+#ifdef LOCAL_DEBUG_FLAG
+    printk("getting pages to to free page list \n");	
+#endif
+
+    list_for_each_entry_safe(page, tmp, &nv_free_page_list, nvlist)
+    if ( page != NULL ) {
+	      alloc_nvpages_cnt++;
+    	 /*delete the entry from free page list */          
+    	 WARN_ON(find_first_and_delete(page));
+		/*successful in deleting a page */
+		//printk("Successful in deleting pages \n");
+		break;
+	}else {
+		goto page_error;	
+	}
+#endif
+
+#ifdef NV_JIT_ALLOC
+get_frm_jit_alloc:
+	if(!page) {
+	    nodeid = find_persistent_node();
+    	page = nv_alloc_fresh_page_node(nodeid,PAGE_SIZE);
+		if(!page) {
+			goto page_error;
+		}
+	}else {
+		printk("reusing pages \n");
+	}
+#endif
+
+#ifdef _NV_LOCKS
+	spin_unlock(&nvpagelock);
+#endif
+	return page; 
+
+page_error: 
+
+#ifdef _NV_LOCKS
+	spin_unlock(&nvpagelock);
+#endif
+	return NULL; 
+}
+EXPORT_SYMBOL(getnvpage);
+
+
+/*memory.c*/
+/*HETERO MEMORY changes*/
+struct page* get_hetero_io_page(struct vm_area_struct *vma ) {
+
+    struct page *page = NULL;
+
+#ifdef NV_JIT_ALLOC	
+    int nodeid=0;
+#endif
+
+#ifdef _NV_LOCKS
+    spin_lock(&nvpagelock);
+#endif
+    //page = hetero_getnxt_io_page_mm(false);
+	page = hetero_alloc_mm(GFP_PERSISTENCE, 0, 0);
+    if(!page){
+        goto getnvpage_io_err;
+    }
+
+    //page->nvdirty = PAGE_MIGRATED;
+    //set_bit(PG_hetero, &page->flags);
+#ifdef _NV_LOCKS
+    spin_unlock(&nvpagelock);
+#endif
+    return page;
+getnvpage_io_err:
+#ifdef _NV_LOCKS
+    spin_unlock(&nvpagelock);
+#endif
+    return NULL;
+}
+EXPORT_SYMBOL(get_hetero_io_page);
 
 #else
 struct page* getnvpage(struct vm_area_struct *vma ) {
@@ -5291,8 +5540,6 @@ struct page* getnvpage(struct vm_area_struct *vma ) {
 		 printk("getnvpage: list not intialized \n");
 		 goto page_error;
 	}
-
-get_from_nvlist:
 
 #ifdef LOCAL_DEBUG_FLAG
     printk("getting pages to to free page list \n");	
@@ -5356,35 +5603,6 @@ page_error:
 EXPORT_SYMBOL(getnvpage);
 #endif
 
-#if 0
-struct page* getnvpage(struct vm_area_struct *vma ) {
-
-	struct page *page = NULL, *tmp = NULL;
-    int ret = 0, refill =-1;
-
-	WARN_ON(!vma);
-	if(!g_nvfreepglst) {	
-		 printk("getnvpage: list not intialized \n");
-		return NULL;
-	}
-
-	spin_lock(&nv_pagelist_lock);
-    list_for_each_entry_safe(page, tmp, &nv_free_page_list, nvlist)
-    if ( page != NULL ) {
-	      alloc_nvpages_cnt++;
-    	 /*delete the entry from free page list */          
-    	 WARN_ON(find_first_and_delete(page));
-		 break;
-	}
-	spin_unlock(&nv_pagelist_lock);
-	return page; 
-page_error: 
-	    return NULL; 
-}
-
-EXPORT_SYMBOL(getnvpage);
-#endif
-
 int find_first_and_delete(struct page *page) {
 	if (page ) {
 		list_del(&page->nvlist);
@@ -5392,21 +5610,6 @@ int find_first_and_delete(struct page *page) {
     }else
 	    return -1;
 }
-
-/*int find_first_and_delete( struct page *page_to_del, struct list_head *head,
-							struct vm_area_struct *vma ) {
-
-		if (page_to_del ) {
-		list_del(&page_to_del->nvlist);
-
-		if(temp_del_page == NULL)
-			temp_del_page = page_to_del;
-
-		return 1;
-      }
-    return 0;
-}*/
-
 
 /**
  * find_persistent_node - find the node with persistent memory
@@ -5417,48 +5620,34 @@ static int find_persistent_node(void)
     int nid =0;
     pg_data_t *pgdat = NULL;
 
-    return 0;
+#ifndef HETEROMEM	
+    return PERSISTENT_MEM_NODE;
+#else
+	return PERSISTENT_MEM_NODE;
 
-    //We are trying to find 
-    /*for_each_node_state(n, N_NORMAL_MEMORY) {
-        best_node++;        
-    }*/
-
-    //assuming persistent memory is in online node set
     num_nodes = nr_online_nodes;
-    if(!num_nodes) {
-        //returning default node 0
+    if(!num_nodes)
         return 0;
-    }
-#ifdef LOCAL_DEBUG_FLAG
-    printk("find_persistent_node: num_online node %d \n",num_nodes);
-#endif
 
     for(nid =0; nid < num_nodes; nid++){
-
+		/*check if pVM node*/
          pgdat = NODE_DATA(nid);
-         if( pgdat ){
-            //check if node is pmem node        
-            if( pgdat->pmem_node ){
 
-                //curently no policy in place
-                //so return the first found node
+         if( pgdat && pgdat->pmem_node ==  NODE_PERSIST){
+            /*curently no policy in place
+            so return the first found node*/
 #ifdef LOCAL_DEBUG_FLAG
-                printk("find_persistent_node: pmem node %d\n", nid);
+           printk("find_persistent_node: pVM node %d\n", nid);
 #endif
-                return nid;
-            }
+		   /*for_each_node_state(n, N_NORMAL_MEMORY) {
+		        best_node++;        
+   		    }*/
+           return nid;
          }
-    }
-
-#ifdef LOCAL_DEBUG_FLAG
-    printk("find_persistent_node: failed finding pmem node %d\n", nid);
+      }
 #endif
     return nid;
 }
-
-
-
 
 //if the passed node id is -1, then allocate a new node
 static struct page *nv_alloc_fresh_page_node(int nid, unsigned long size)
@@ -5470,27 +5659,24 @@ static struct page *nv_alloc_fresh_page_node(int nid, unsigned long size)
 #ifdef LOCAL_DEBUG_FLAG
         printk( "nv_alloc_fresh_page_node:  \n");
 #endif
-
         if(nid == -1)
-        nid = find_persistent_node();
+        	nid = find_persistent_node();
 
         if (order >= MAX_ORDER)
                 return NULL;
 
-allocate:
-            //page = alloc_pages_exact_node(nid,  GFP_HIGHUSER_MOVABLE |__GFP_ZERO|GFP_THISNODE, order);
-            //Method to allocate from NVRAM
-            //FIXME do we need a lock here?????  
-            page = alloc_pages_nvram(nid,  GFP_HIGHUSER_MOVABLE |__GFP_ZERO|GFP_THISNODE, order);
-            if ( page ) 
+        //page = alloc_pages_exact_node(nid,  GFP_HIGHUSER_MOVABLE |__GFP_ZERO|GFP_THISNODE, order);
+        //Method to allocate from NVRAM
+        //FIXME do we need a lock here?????  
+        page = alloc_pages_nvram(nid,  GFP_HIGHUSER_MOVABLE |__GFP_ZERO|GFP_THISNODE, order);
+        if ( page ) 
 #ifdef LOCAL_DEBUG_FLAG
-                 printk( "page allocation successful \n");
+        	printk( "page allocation successful \n");
 #endif 
 
 #ifdef SETNVMPAGEBIT
 			/*if(test_bit(PG_nvram, &page->flags))
 				goto allocate;*/
-
             //We need to mark pages as type NVRAM avoids 
             //clearing pages when used with I/O backed mmap
             set_bit(PG_nvram, &page->flags); 
@@ -5502,12 +5688,11 @@ allocate:
             printk("total non_persist_pages %u \n",non_persist_pages);
 #endif
 
-
 #ifdef LOCAL_DEBUG_FLAG 
-            if(test_bit(PG_nvram, &page->flags))
-                printk("PG_nvram bit set for page \n");
+		if(test_bit(PG_nvram, &page->flags))
+       		printk("PG_nvram bit set for page \n");
 #endif
-            return page;
+		return page;
 }
 
 
@@ -5632,8 +5817,8 @@ int load_nv_pages( unsigned int *pfn_list, unsigned int count ){
         //curretly this adds to free list instead
         //of used list. FIXME
         if ( add_to_used_list(pfn_temp) < 0 ){
-            printk("load_nv_pages: add_to_used_list failed at index %d,\ 
-                    with pfn_temp %u\n", index, pfn_temp);
+            printk("load_nv_pages: add_to_used_list failed at index %d, "
+                    "with pfn_temp %u\n", index, pfn_temp);
             goto error;
         }
     }
@@ -5717,6 +5902,297 @@ error:
     return -1;
 }
 EXPORT_SYMBOL(init_proc_nvpages);
+
+
+
+#ifdef NOXEN_HETERO
+static spinlock_t heterolock;
+/*hetero used page list count*/
+static unsigned int nr_used_lst_pgcnt;
+/*app exit flags*/
+static unsigned int nr_hetero_page_miss;
+static unsigned int max_fastmem_pages;
+static unsigned int nr_fast_inuse_pages;
+static unsigned int nr_fast_io_pg_access;
+static unsigned int nr_hetero_io_miss;
+
+struct page *hetero_alloc_mm(gfp_t gfp, int order, int node)
+{
+	struct page *page;
+	int nodeid=0;
+
+	nodeid= find_persistent_node();
+
+	/*overriding callers node choice*/
+	if(nodeid != node)
+		node = nodeid;
+
+	page = alloc_pages_nvram(node, gfp, 0);
+    if(!page) {
+		printk(KERN_ALERT "hetero_alloc_mm: alloc_pages_nvram "
+				"failed returning page \n");
+		goto pagemiss;
+	}
+	//printk(KERN_ALERT "hetero_alloc_mm: allocating NVRAM page \n");
+	if(page->nvdirty != PAGE_MIGRATED){
+		goto heteropgmisses;
+	}else {
+		printk(KERN_ALERT "hetero_alloc_mm: page->nvdirty != PAGE_MIGRATED \n");
+	}
+	//clear_user_highpage(page,0);
+	page->nvdirty = PAGE_MIGRATED;
+
+	return page;
+
+heteropgmisses:
+	return page;
+
+pagemiss:
+	return NULL;
+}
+EXPORT_SYMBOL(hetero_alloc_mm);
+
+struct page *hetero_alloc_IO_mm(gfp_t gfp, int order, int node)
+{
+	struct page *page;
+
+	nr_fast_io_pg_access++;
+	//return hetero_alloc_mm(gfp, order, node);
+
+   if(nr_fast_inuse_pages > max_fastmem_pages)
+		goto pagemisses;
+
+	page = alloc_pages_nvram(node, gfp, 0);
+    if(!page) {
+		goto pagemisses;
+	}
+	if(page->nvdirty != PAGE_MIGRATED)
+		goto heteropgmisses;
+
+	clear_user_highpage(page,0);
+	page->nvdirty = PAGE_MIGRATED;
+
+	hetero_add_to_nvlist_mm(page);
+	nr_fast_inuse_pages++;
+	nr_used_lst_pgcnt++;
+	return page;
+
+heteropgmisses:	 /*got page but not fast page*/
+	nr_hetero_page_miss++;
+	nr_hetero_io_miss++;
+	return page;
+
+pagemisses:
+	nr_hetero_io_miss++;
+	nr_hetero_page_miss++;
+	return NULL;
+}
+EXPORT_SYMBOL(hetero_alloc_IO_mm);
+
+
+struct page *hetero_getnxt_io_page_mm(bool prefer_highmem)
+{
+	struct page *page=NULL;
+
+	spin_lock(&heterolock);
+
+    /*HETERO MEMORY changes*/
+    page = alloc_pages_nvram(0,  GFP_PERSISTENCE, 0);
+    if(!page) {
+        spin_unlock(&heterolock);
+        goto iopagemisses;
+    }
+
+	if(page->nvdirty != PAGE_MIGRATED) 
+		goto fastiopagemiss;
+
+	nr_fast_inuse_pages++;
+	nr_fast_io_pg_access++;
+
+	nr_used_lst_pgcnt++;
+	spin_unlock(&heterolock);	
+	if(nr_used_lst_pgcnt % 100000 == 0)
+		printk("hetero_getnxt_page: used pagecount %u \n",nr_used_lst_pgcnt); 
+	return page;
+
+fastiopagemiss:
+	spin_unlock(&heterolock);
+	return page;
+
+iopagemisses:
+	nr_hetero_page_miss++;
+	return NULL;
+}
+EXPORT_SYMBOL(hetero_getnxt_io_page_mm);
+
+
+
+void hetero_add_to_nvlist_mm(struct page *page){
+	;
+}
+EXPORT_SYMBOL(hetero_add_to_nvlist_mm);
+
+#endif
+
+
+
+
+#if 0
+/*
+ * We enter with non-exclusive mmap_sem (to exclude vma changes,
+ * but allow concurrent faults), and pte mapped but not yet locked.
+ * We return with mmap_sem still held, but pte unmapped and unlocked.
+ */
+static int do_anonymous_page_node(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, pte_t *page_table, pmd_t *pmd,
+		unsigned int flags)
+{
+	struct page *page;
+	spinlock_t *ptl;
+	pte_t entry;
+	unsigned int order;
+
+	pte_unmap(page_table);
+
+	/* Check if we need to add a guard page to the stack */
+	if (check_stack_guard_page(vma, address) < 0)
+		return VM_FAULT_SIGBUS;
+
+	/* Use the zero-page for reads */
+	if (!(flags & FAULT_FLAG_WRITE)) {
+		entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
+						vma->vm_page_prot));
+		page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+		if (!pte_none(*page_table))
+			goto unlock;
+		goto setpte;
+	}
+
+	/* Allocate our own private page. */
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+	//page = alloc_zeroed_user_highpage_movable(vma, address);
+	//printk(KERN_ALERT "allocating from persistent node \n");
+	//page = nv_alloc_fresh_page_node(find_persistent_node(),PAGE_SIZE);
+	order = get_order(PAGE_SIZE);
+    page = alloc_pages_exact_node(find_persistent_node(),  GFP_HIGHUSER_MOVABLE |__GFP_ZERO|GFP_THISNODE, order);
+	if (!page)
+		goto oom;
+
+	__SetPageUptodate(page);
+
+#ifdef DEBUG_STATS
+	  if(test_bit(PG_nvram, &page->flags))	
+		printk("NVM bit is already set \n");
+
+      non_persist_pages++;
+      //printk("total non_persist_pages %u \n",non_persist_pages);
+#endif
+
+       set_bit(PG_nvram, &page->flags);
+
+	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
+		goto oom_free_page;
+
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty(entry));
+
+	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+	if (!pte_none(*page_table))
+		goto release;
+
+	inc_mm_counter_fast(mm, MM_ANONPAGES);
+	page_add_new_anon_rmap(page, vma, address);
+setpte:
+	set_pte_at(mm, address, page_table, entry);
+
+	/* No need to invalidate - it was non-present before */
+	update_mmu_cache(vma, address, page_table);
+unlock:
+	pte_unmap_unlock(page_table, ptl);
+	return 0;
+release:
+	mem_cgroup_uncharge_page(page);
+	page_cache_release(page);
+	goto unlock;
+oom_free_page:
+	page_cache_release(page);
+oom:
+	return VM_FAULT_OOM;
+}
+
+
+/*
+ * We enter with non-exclusive mmap_sem (to exclude vma changes,
+ * but allow concurrent faults), and pte mapped but not yet locked.
+ * We return with mmap_sem still held, but pte unmapped and unlocked.
+ */
+int do_anonymous_nvmem_page1(struct mm_struct *mm, struct vm_area_struct *vma,
+		unsigned long address, pte_t *page_table, pmd_t *pmd,
+		unsigned int flags)
+{
+	struct page *page;
+	spinlock_t *ptl;
+	pte_t entry;
+
+	pte_unmap(page_table);
+
+	/* Check if we need to add a guard page to the stack */
+	if (check_stack_guard_page(vma, address) < 0)
+		return VM_FAULT_SIGBUS;
+
+	/* Use the zero-page for reads */
+	if (!(flags & FAULT_FLAG_WRITE)) {
+		entry = pte_mkspecial(pfn_pte(my_zero_pfn(address),
+						vma->vm_page_prot));
+		page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+		if (!pte_none(*page_table))
+			goto unlock;
+		goto setpte;
+	}
+
+	/* Allocate our own private page. */
+	if (unlikely(anon_vma_prepare(vma)))
+		goto oom;
+
+	page = alloc_zeroed_user_highpage_movable(vma, address);
+	if (!page)
+		goto oom;
+	__SetPageUptodate(page);
+
+	if (mem_cgroup_newpage_charge(page, mm, GFP_KERNEL))
+		goto oom_free_page;
+
+	entry = mk_pte(page, vma->vm_page_prot);
+	if (vma->vm_flags & VM_WRITE)
+		entry = pte_mkwrite(pte_mkdirty(entry));
+
+	page_table = pte_offset_map_lock(mm, pmd, address, &ptl);
+	if (!pte_none(*page_table))
+		goto release;
+
+	inc_mm_counter_fast(mm, MM_ANONPAGES);
+	page_add_new_anon_rmap(page, vma, address);
+setpte:
+	set_pte_at(mm, address, page_table, entry);
+	/* No need to invalidate - it was non-present before */
+	update_mmu_cache(vma, address, page_table);
+unlock:
+	pte_unmap_unlock(page_table, ptl);
+	return 0;
+release:
+	mem_cgroup_uncharge_page(page);
+	page_cache_release(page);
+	goto unlock;
+oom_free_page:
+	page_cache_release(page);
+oom:
+	return VM_FAULT_OOM;
+}
+
+#endif
 
 
 

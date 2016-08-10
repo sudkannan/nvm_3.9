@@ -35,6 +35,10 @@
 #include <linux/cleancache.h>
 #include "internal.h"
 
+
+#include <xen/heteromem.h>
+
+
 /*
  * FIXME: remove all knowledge of the buffer layer from the core VM
  */
@@ -445,6 +449,15 @@ int add_to_page_cache_locked(struct page *page, struct address_space *mapping,
 	int error;
 
 	VM_BUG_ON(!PageLocked(page));
+
+	/*if(page->nvdirty == PAGE_MIGRATED) {
+		//printk(KERN_ALERT "PageSwapBacked\n");
+	    ClearPageSwapCache(page);
+	}
+	if(page->nvdirty == PAGE_MIGRATED) {
+		if(PageSwapBacked(page))
+		printk(KERN_ALERT "PageSwapBacked\n");
+	}*/
 	VM_BUG_ON(PageSwapBacked(page));
 
 	error = mem_cgroup_cache_charge(page, current->mm,
@@ -502,14 +515,14 @@ struct page *__page_cache_alloc(gfp_t gfp)
 		do {
 			cpuset_mems_cookie = get_mems_allowed();
 			n = cpuset_mem_spread_node();
-#if 0			
+
 //#ifdef HETEROMEM
-			if(current && current->mm && current->mm->def_flags && VM_HETERO){
-				printk(KERN_ALERT "__page_cache_alloc: "
-							"alloc_pages_exact_node from hetero \n");
-				page = getnvpage(NULL);
-			}
-			if(!page)
+#if 0
+        if(current && current->heteroflag == PF_HETEROMEM){
+            printk(KERN_ALERT "mm/filemap.c, Hetero __page_cache_alloc \n");
+            //page = getnvpage(NULL);
+        }
+        //if(!page)
 #endif
 			page = alloc_pages_exact_node(n, gfp, 0);
 
@@ -517,15 +530,18 @@ struct page *__page_cache_alloc(gfp_t gfp)
 		return page;
 	}
 
-#if 0
-//#ifdef HETEROMEM
-		if(current && current->mm && current->mm->def_flags && VM_HETERO){
+#ifdef HETEROMEM
+//#if 0
+		if(current && current->heteroflag == PF_HETEROMEM){
 			//printk(KERN_ALERT "__page_cache_alloc: "
 			//				"before alloc_pages from hetero \n");
-			page = getnvpage(NULL);
-			if(page) return page;
+			//page = get_hetero_io_page(NULL);
+			page = hetero_alloc_IO(GFP_HIGHUSER_MOVABLE |__GFP_ZERO, 0, 0);
+			if(page)
+				return page;
 		}	
 #endif
+
 	return alloc_pages(gfp, 0);
 }
 EXPORT_SYMBOL(__page_cache_alloc);
@@ -1290,10 +1306,11 @@ no_cached_page:
 		 */
 //#ifdef HETEROMEM
 #if 0
-        if(current && current->mm && current->mm->def_flags && VM_HETERO){
-            page = getnvpage(NULL);
+		if(current && current->heteroflag == PF_HETEROMEM){
+			printk(KERN_ALERT "mm/filemap.c, Hetero before page cache alloc 8888\n"); 
+            //page = getnvpage(NULL);
         }
-        if(!page)
+        //if(!page)
 #endif	
 		page = page_cache_alloc_cold(mapping);
 		if (!page) {
@@ -1515,13 +1532,17 @@ static int page_cache_read(struct file *file, pgoff_t offset)
 	int ret;
 
 	do {
+
+
 //#ifdef HETEROMEM
 #if 0
-        if(current && current->mm &&  current->mm->def_flags && VM_HETERO){
-            page = getnvpage(NULL);
+        if(current && current->heteroflag == PF_HETEROMEM){
+            printk(KERN_ALERT "mm/filemap.c, Hetero In page_cache_read\n");
+            //page = getnvpage(NULL);
         }
-        if(!page)
-#endif	
+        //if(!page)
+#endif
+		
 		page = page_cache_alloc_cold(mapping);
 		if (!page)
 			return -ENOMEM;
@@ -1649,11 +1670,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 		do_async_mmap_readahead(vma, ra, file, page, offset);
 	} else if (!page) {
 
-#ifdef HETEROMEM_DISABLE
-	    if(current && current->mm && current->mm->def_flags && VM_HETERO){
-    	    printk(KERN_ALERT "not found find_get_page cache \n");
-    	}
-#endif
 		/* No page in the page cache at all */
 		do_sync_mmap_readahead(vma, ra, file, offset);
 		count_vm_event(PGMAJFAULT);
@@ -1700,12 +1716,6 @@ retry_find:
 	return ret | VM_FAULT_LOCKED;
 
 no_cached_page:
-
-#ifdef HETEROMEM_DISABLE
-	    if(current && current->mm && current->mm->def_flags && VM_HETERO){
-    	    printk(KERN_ALERT "In no_cached_page: \n");
-    	}
-#endif
 
 	/*
 	 * We're only likely to ever get here if MADV_RANDOM is in

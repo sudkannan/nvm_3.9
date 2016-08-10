@@ -19,6 +19,11 @@
 #include <linux/atomic.h>
 #include <asm/page.h>
 
+/*Persistent memory pVM changes */
+#define NODE_PERSIST 222
+#define NODE_PERSIST_NODE1 1
+#define HETEROMEM
+
 /* Free memory management - zoned buddy allocator.  */
 #ifndef CONFIG_FORCE_MAX_ZONEORDER
 #define MAX_ORDER 11
@@ -39,6 +44,8 @@ enum {
 	MIGRATE_UNMOVABLE,
 	MIGRATE_RECLAIMABLE,
 	MIGRATE_MOVABLE,
+	/*HETERO MEMORY changes*/
+	MIGRATE_HETERO,
 	MIGRATE_PCPTYPES,	/* the number of types on the pcp lists */
 	MIGRATE_RESERVE = MIGRATE_PCPTYPES,
 #ifdef CONFIG_CMA
@@ -60,6 +67,7 @@ enum {
 #ifdef CONFIG_MEMORY_ISOLATION
 	MIGRATE_ISOLATE,	/* can't allocate from here */
 #endif
+
 	MIGRATE_TYPES
 };
 

@@ -31,6 +31,8 @@
 #include <linux/memcontrol.h>
 #include <linux/gfp.h>
 
+#include <xen/heteromem.h>
+
 #include "internal.h"
 
 #ifdef CONFIG_NVM_1
@@ -66,11 +68,22 @@ static void __page_cache_release(struct page *page)
 
 static void __put_single_page(struct page *page)
 {
-	if(test_bit(PG_hetero, &page->flags)) {
+
+	int hetmempage = 0;
+	if(page->nvdirty == PAGE_MIGRATED) {
+		printk(KERN_ALERT "__put_single_page \n");
+		hetmempage = 1;
+		page->nvdirty = PAGE_MIGRATED;
+	}
+	//if(test_bit(PG_hetero, &page->flags)) {
 		//return;
 		//printk(KERN_ALERT "__put_single_page page has hetero flag \n");
-	}
+	//}
+	
 	__page_cache_release(page);
+	if(hetmempage) {
+		page->nvdirty = PAGE_MIGRATED;
+	}
 	free_hot_cold_page(page, 0);
 }
 

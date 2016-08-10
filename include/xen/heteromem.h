@@ -3,7 +3,7 @@
  */
 
 #define RETRY_UNLIMITED	0
-#define PAGE_MIGRATED 111
+//#define PAGE_MIGRATED 111
 
 struct heteromem_stats {
 	/* We aim for 'current allocation' == 'target allocation'. */
@@ -36,6 +36,18 @@ int heteromem_init(int idx, unsigned long start, unsigned long size);
 /*HeteroMem Get next page*/
 struct page *hetero_getnxt_page(bool prefer_highmem);
 struct page *hetero_getnxt_io_page(bool prefer_highmem);
+<<<<<<< HEAD
+=======
+struct page *hetero_alloc_hetero(gfp_t gfp, int order, int node);
+struct page *hetero_alloc_migrate(gfp_t gfp, int order, int node);
+struct page *hetero_alloc_IO(gfp_t gfp, int order, int node);
+void hetero_add_to_nvlist(struct page *page);
+
+void hetero_free_hetero();
+void increment_hetero_alloc_hit();
+void increment_hetero_alloc_miss();
+
+>>>>>>> b951cd246cd02adaf9dce69807bf314201a3cab8
 int send_hotpage_skiplist();
 xen_pfn_t *get_hotpage_list(unsigned int *hotcnt);
 int is_hetero_hot_page(struct page *page);

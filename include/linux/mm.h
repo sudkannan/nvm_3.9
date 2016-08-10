@@ -3,6 +3,8 @@
 
 #include <linux/errno.h>
 
+//#define RANDOMHETERO
+
 #ifdef __KERNEL__
 
 #include <linux/gfp.h>
@@ -18,6 +20,9 @@
 #include <linux/bit_spinlock.h>
 #include <linux/shrinker.h>
 
+
+#define NOXEN_HETERO
+
 struct mempolicy;
 struct anon_vma;
 struct anon_vma_chain;
@@ -28,6 +33,8 @@ struct writeback_control;
 #ifndef CONFIG_DISCONTIGMEM          /* Don't use mapnrs, do it properly */
 extern unsigned long max_mapnr;
 #endif
+
+#define PAGE_MIGRATED 3
 
 extern unsigned long num_physpages;
 extern unsigned long totalram_pages;
@@ -111,6 +118,7 @@ extern unsigned int kobjsize(const void *objp);
 #define VM_HETERO	0x100000000	 /*Hetero flag*/
 
 #define HETEROMEM
+//#define XEN_HETEROMEM_FAKENUMA
 
 
 #if defined(CONFIG_X86)
@@ -1779,98 +1787,6 @@ static inline unsigned int debug_guardpage_minorder(void) { return 0; }
 static inline bool page_is_guard(struct page *page) { return false; }
 #endif /* CONFIG_DEBUG_PAGEALLOC */
 
-
-/*NVRAM functions */
-#define MIN_NVPGS_THRESH 256
-//#define NV_STATS_DEBUG
-//#define LOCAL_DEBUG_FLAG 
-#define NV_DIRTYPG_TRCK
-
-//NVRAM changes
-extern spinlock_t nv_pagelist_lock;
-extern spinlock_t nv_proclist_lock;
-
-
-/*NVpage to be added to RB tree*/
-struct nvpage {
-	struct page *page;
-	struct rb_node rbnode;	
-};
-
-
-/* List of nv process objects*/
-struct nv_proc_obj {
-
-    int pid;
-    struct list_head head_proc;
-    struct list_head next_proc;
-    struct list_head chunk_list;
-    unsigned int chunk_initialized;
-    /*starting virtual address of process*/
-    unsigned long start_addr;
-    /*size*/
-    unsigned long size;
-    int num_chunks;
-	struct rb_root chunk_tree;
-#ifdef NV_STATS_DEBUG
-	unsigned int num_pages;
-	unsigned int read_pgcnt;
-#endif
-};
-
-struct rqst_struct {
-    size_t bytes;
-    //unique id on how application wants to identify 
-    //this chunk;
-    int id;
-    int pid;      
-    //volatile flag
-    int isVolatile;
-
-};
-
-
-/*Every nvmap call will lead to a chunk creation*/
-struct nv_chunk {
-    unsigned int vma_id;
-    unsigned long length;
-    struct nv_proc_obj *proc_obj;
-    //pages in a chunk
-    struct list_head nv_used_page_list;
-    int used_page_list_flg;
-    struct list_head next_chunk;
-	struct rb_root page_tree;
-	struct rb_node rb_chunknode;
-    unsigned int proc_id;
-	/*indicates the pagecount of chunk*/
-	unsigned int pagecnt;
-    //Chunk hash - to check if error exists when reading back
-    //stored data  
-    int chunk_hash;
-	//Max page offset
-	//This feild is specifically
-	//to avoid going deep into rbtree
-    //for sequential data access
-	unsigned int max_pg_offset;
-#ifdef NV_DIRTYPG_TRCK
-	unsigned int dirtpgs;
-#endif
-
-};
-
-//This structure holds mapping of all process 
-//and the persistent memory allocations
-struct pmem_map_struct {
-
-    //Identifier for process
-    unsigned int inode;
-    //total_number of pages_allocated by process
-    unsigned int page_count;
-	//list of pmem pages used by process
-	struct list_head proc_pg_list;
-	unsigned int *pfn_list;
-};
-
 struct nvmap_arg_struct {
 
     unsigned long fd;
@@ -1883,90 +1799,7 @@ struct nvmap_arg_struct {
     int ref_count;
 };
 
-/*nv errors */
-#define NV_ERR_LD_PROCOBJ 1
-#define NV_ERR_LD_VMA     2
 
-
-//Persistent memory changes
-//Debugging purpose for NVRAM code
-#define NVRAM_DEBUG
-
-//Persistent memory return codes;
-#define EXISTS 1
-#define UNEXP_ERR -1
-#define DOES_NOT_EXIST 0
-
-
-extern int getfree_nv_list_count(void);
-extern unsigned long do_persistent_alloc(unsigned long addr, unsigned long len);
-extern int do_anonymous_nvmem_page(struct mm_struct *mm, struct vm_area_struct *vma,
-                unsigned long address, pte_t *page_table, pmd_t *pmd,
-                unsigned int flags);
-extern int alloc_fresh_nv_pages(nodemask_t *nodes_allowed, int num_pages);
-extern unsigned int generate_unique_id (struct vm_area_struct *vma);
-extern struct nv_proc_obj *create_proc_obj(unsigned int );
-extern int add_proc_obj( struct nv_proc_obj *proc_obj );
-extern struct nv_proc_obj *find_proc_obj(unsigned int proc_id);
-
-
-extern struct vm_area_struct *nv_copy_vma(struct vm_area_struct **vmap,
-        unsigned long addr, unsigned long len, pgoff_t pgoff);
-extern unsigned long do_nv_intialize_vma( unsigned long proc_id );
-
-extern unsigned long do_nv_mmap_pgoff(struct file *file, unsigned long addr,
-                        unsigned long len, unsigned long prot,
-                        unsigned long flags, unsigned long pgoff,
-						struct nvmap_arg_struct *a);
-
-//get a persistent memory page
-////defined in memory.c
-extern struct page* getnvpage(struct vm_area_struct*);
-
-//intialize persistent memory mao
-int inti_pmem_map(void);
-
-//Every time a process uses persistent memory pages
-//it is charged for using pages to keep track
-extern int charge_proc_pages(struct vm_area_struct*, unsigned int,unsigned long );
-
-//Function which given a unique process identifier finds
-//all persistent pages and loads them to the persistent alloc
-//list
-extern int init_proc_nvpages(unsigned long);
-
-//Method to get the page from a chunk
-extern struct page* nv_read(struct vm_area_struct *vma, unsigned long fault_addr);
-
-/*verify if process and chunk exists. Usually used for read only
-mode of data */
-extern int find_proc_and_chunk(unsigned int proc_id, unsigned int chunk_id, 
-                                                                 size_t chunk_size);
-//update process with NVRAM allocation
-extern int update_process(unsigned int proc_id, unsigned int chunk_id, size_t chunk_size,
-                                                                   int clear_flg);
-extern struct page* get_nv_faultpg(struct vm_area_struct *vma,
-                            unsigned long fault_addr,
-                             int *err);
-
-//Method to add pages to chunks of a process
-extern int add_pages_to_chunk(struct vm_area_struct *vma, struct page *page, unsigned long addr);
-
-int nv_vma_link( struct vm_area_struct *root, struct vm_area_struct *new_vma);
-int try_to_unmap_nv_anon( unsigned long proc_id );
-unsigned long get_inode_number(struct vm_area_struct *vma);
-int find_proc_nvmap_entr(unsigned int inode);
-
-/*Adding pages to free list*/
-int add_to_free_nvlist(struct page *page);
-/*delete all nv pages in a vma*/
-int delete_pages_in_chunk(struct vm_area_struct *vma);
-
-#ifdef NV_STATS_DEBUG
-void print_proc_nvstats(struct nv_proc_obj *proc_obj);
-void print_chunk_stats(struct nv_chunk *chunk);
-void print_global_nvstats(void);
-#endif
 
 #endif /* _LINUX_MM_H */
 #endif

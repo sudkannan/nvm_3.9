@@ -205,10 +205,12 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	u8 *data;
 	bool pfmemalloc;
 
-//#ifdef HETEROMEM
-		//printk(KERN_ALERT "skb_copy_ubufs: "
-		//	"alloc_page from hetero \n");
-//#endif
+#if 0 //def HETEROMEM
+	if(current && (current->heteroflag && PF_HETEROMEM)){
+		printk(KERN_ALERT "__alloc_skb: "
+			"alloc_page from hetero \n");
+	}
+#endif
 
 	cache = (flags & SKB_ALLOC_FCLONE)
 		? skbuff_fclone_cache : skbuff_head_cache;
@@ -352,8 +354,8 @@ static void *__netdev_alloc_frag(unsigned int fragsz, gfp_t gfp_mask)
 	void *data = NULL;
 	int order;
 	unsigned long flags;
-//#ifdef HETEROMEM
-#if 0
+#ifdef HETEROMEM
+//#if 0
 	struct page *page=NULL;
 #endif
 
@@ -361,30 +363,30 @@ static void *__netdev_alloc_frag(unsigned int fragsz, gfp_t gfp_mask)
 	nc = &__get_cpu_var(netdev_alloc_cache);
 	if (unlikely(!nc->frag.page)) {
 refill:
-		for (order = NETDEV_FRAG_PAGE_MAX_ORDER; ;) {
-			gfp_t gfp = gfp_mask;
+	for (order = NETDEV_FRAG_PAGE_MAX_ORDER; ;) {
+		gfp_t gfp = gfp_mask;
 
-			if (order)
-				gfp |= __GFP_COMP | __GFP_NOWARN;
+		if (order)
+			gfp |= __GFP_COMP | __GFP_NOWARN;
 
 //#ifdef HETEROMEM
 #if 0
-			//if(current && (current->heteroflag && PF_HETEROMEM)){
-				 page = getnvpage(NULL);
-				 if(page){
-					printk(KERN_ALERT "nc->frag.page: current "
-						"alloc_page from hetero " 
-						"(current->heteroflag && PF_HETEROMEM)\n");
-				     nc->frag.page = page;
-				     goto skipalloc;
-				 }
-			//}
+	if(current && (current->heteroflag && PF_HETEROMEM)){
+		 page = get_hetero_io_page(NULL);
+		 if(page){
+			printk(KERN_ALERT "nc->frag.page: current "
+				"alloc_page from hetero " 
+				"(current->heteroflag && PF_HETEROMEM)\n");
+			     nc->frag.page = page;
+			     goto skipalloc;
+		 }
+	}
 #endif
-			nc->frag.page = alloc_pages(gfp, order);
+		nc->frag.page = alloc_pages(gfp, order);
 
-//#ifdef HETEROMEM
-//skipalloc:			
-//#endif
+#ifdef HETEROMEM
+skipalloc:			
+#endif
 			if (likely(nc->frag.page))
 				break;
 			if (--order < 0)
@@ -816,12 +818,13 @@ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask)
 		skb_frag_t *f = &skb_shinfo(skb)->frags[i];
 
 //#ifdef HETEROMEM
-		//if(current && current->mm && current->mm->def_flags && VM_HETERO){
+#if 0
+		if(current && (current->heteroflag && PF_HETEROMEM)){
 			printk(KERN_ALERT "skb_copy_ubufs: alloc_page from hetero \n");
-			//page = getnvpage(NULL);
-		//}
-		//if(!page)
-//#endif
+			page = get_hetero_io_page(NULL);
+		}
+		if(!page)
+#endif
 		page = alloc_page(gfp_mask);
 		if (!page) {
 			while (head) {

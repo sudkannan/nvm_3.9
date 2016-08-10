@@ -59,6 +59,7 @@
 #include <linux/backing-dev.h>
 
 #include <asm/tlbflush.h>
+#include <xen/heteromem.h>
 
 #include "internal.h"
 
@@ -1753,6 +1754,7 @@ static int rmap_walk_file(struct page *page, int (*rmap_one)(struct page *,
 int rmap_walk(struct page *page, int (*rmap_one)(struct page *,
 		struct vm_area_struct *, unsigned long, void *), void *arg)
 {
+
 	VM_BUG_ON(!PageLocked(page));
 
 	if (unlikely(PageKsm(page)))

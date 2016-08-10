@@ -478,6 +478,12 @@ HYPERVISOR_perfctr_op(int op, struct perf_ctrs *arg)
 	   //return _hypercall1(int, hsm_free_page, op);	
 }
 
+static inline int
+HYPERVISOR_set_hetero_param_op(int op, struct hetero_params *arg)
+{
+	   return _hypercall2(int, set_hetero_param_op, op, arg);
+	   //return _hypercall1(int, hsm_free_page, op);	
+}
 
 
 static inline int
