@@ -68,7 +68,7 @@
 #include <xen/page.h>
 
 
-#define HETEROMEM
+//#define HETEROMEM
 #define HETEROMEM_PGS 100000
 /*reduce the balloon pages by ratio*/
 #define HETERO_RATIO 4

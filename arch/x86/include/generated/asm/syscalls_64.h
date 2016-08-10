@@ -297,12 +297,7 @@ __SYSCALL_64(310, sys_process_vm_readv, sys_process_vm_readv)
 __SYSCALL_64(311, sys_process_vm_writev, sys_process_vm_writev)
 __SYSCALL_COMMON(312, sys_kcmp, sys_kcmp)
 __SYSCALL_COMMON(313, sys_finit_module, sys_finit_module)
-
 __SYSCALL_COMMON(314, sys_nv_mmap_pgoff, sys_nv_mmap_pgoff)
-__SYSCALL_COMMON(315, sys_nvpoolcreate, sys_nvpoolcreate)
-__SYSCALL_COMMON(316, sys_NValloc, sys_NValloc)
-__SYSCALL_COMMON(317, sys_move_inactpages, sys_move_inactpages)
-
 __SYSCALL_X32(512, compat_sys_rt_sigaction, compat_sys_rt_sigaction)
 __SYSCALL_X32(513, stub_x32_rt_sigreturn, stub_x32_rt_sigreturn)
 __SYSCALL_X32(514, compat_sys_ioctl, compat_sys_ioctl)

@@ -66,9 +66,9 @@
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
-
 #include "internal.h"
 
+#if 0
 /*Xen HETEROMEM related changes*/
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/hypercall.h>
@@ -79,7 +79,7 @@
 #include <xen/heteromem.h>
 #include <xen/features.h>
 #include <xen/page.h>
-
+#endif
 
 //#define HETEROMEM
 #define SETNVMPAGEBIT 

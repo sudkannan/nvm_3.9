@@ -2,6 +2,8 @@
  * Xen heteromem functionality
  */
 
+#include <asm/xen/interface.h>
+
 #define RETRY_UNLIMITED	0
 
 struct heteromem_stats {

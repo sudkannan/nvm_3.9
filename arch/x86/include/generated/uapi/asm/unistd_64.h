@@ -316,8 +316,5 @@
 #define __NR_kcmp 312
 #define __NR_finit_module 313
 #define __NR_nv_mmap_pgoff 314
-#define __NR_nvpoolcreate 315
-#define __NR_NValloc 316
-#define __NR_move_inactpages 317
 
 #endif /* _ASM_X86_UNISTD_64_H */
