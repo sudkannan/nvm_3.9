@@ -82,10 +82,11 @@ Also all code related to hotplug has been removed */
 #define XENMEMF_hetero_mem_request  (1<<18)
 #define XENMEMF_hetero_stop_hotpage_scan (1<<19)
 
-#define MAX_HOT_MFN 262144
-#define MAX_MIGRATE 262144
+#define MAX_HOT_MFN 128000
+#define MAX_MIGRATE 128000
 //#define HETERO_JIT
 #define HETEROMIGRATE 111
+#define READ_PERF_CNTRS
 
 /*
  * heteromem_process() state:
@@ -141,6 +142,7 @@ static unsigned int mfnmatchcnt;
 
 /*app exit flags*/
 static unsigned int appexited;
+static unsigned int hetero_page_miss;
 
 
 /* Main work function, always executed in process context. */
@@ -288,10 +290,10 @@ int add_readylist_setup(struct page *page) {
 	/* We will not relinquish the page back to the allocator. 
 	Because we mange the pages*/
 	spin_lock(&heterolock);
-	ClearPageReserved(page);
+	//ClearPageReserved(page);
 	init_page_count(page);
 	//__free_page(page);
-	SetPageReserved(page);	
+	//SetPageReserved(page);	
 	//printk(KERN_ALERT "adding to hetero_ready_lst_pgs \n");
 	list_add(&page->lru, &hetero_used_lst_pgs);
 	spin_unlock(&heterolock);
@@ -461,7 +463,7 @@ struct page* get_from_usedpage_list() {
     	 //printk(KERN_DEBUG "hetero_getused_page: list is empty\n");
 	     return NULL;
 	 }
-	 page = list_entry(hetero_used_lst_pgs.prev, struct page, lru);
+	 page = list_entry(hetero_used_lst_pgs.next, struct page, lru);
 	 if(!page) {
     	printk(KERN_DEBUG "hetero_getused_page: list is empty \n");
 	    return NULL;
@@ -598,6 +600,16 @@ xen_pfn_t *get_hotpage_list(unsigned int *hotcnt)
         	printk(KERN_ALERT "hetero_frame_list alloc failed \n");
         	return NULL;
     	}
+
+#ifdef READ_PERF_CNTRS
+	    get_perf_counters();
+
+    	if(!MigrationEnable()){
+        	*hotcnt =0;
+	        return hetero_frame_list;
+    	}
+	    reset_perf_counters();
+#endif
 
 		struct xen_memory_reservation reservation = {
 				.address_bits = 0,
@@ -956,7 +968,7 @@ void debug_heteroused_page(void)
 /* heteromem_retrieve: rescue a page from the heteromem, if it is not empty. */
 struct page *hetero_getnxt_page(bool prefer_highmem)
 {
-	struct page *page;
+	struct page *page=NULL;
 	unsigned long pfn;
 
 	spin_lock(&heterolock);
@@ -969,7 +981,7 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 		}
 #endif
 		spin_unlock(&heterolock);
-		return NULL;
+		goto pagemisses;
 	}
 
 	if(!prefer_highmem)
@@ -979,8 +991,15 @@ struct page *hetero_getnxt_page(bool prefer_highmem)
 
     if(!page) {
 		spin_unlock(&heterolock);
-		return NULL;
+		 goto pagemisses;
 	}
+
+#ifndef HETERO_JIT	
+	//add to used list of pages
+	//list_add(&page->lru, &hetero_used_lst_pgs);
+	//init_page_count(page);
+#endif	
+
 hetero_nxt_page:
 	list_del(&page->lru);
 	//if(page->nvdirty == HETEROMIGRATE)
@@ -989,14 +1008,7 @@ hetero_nxt_page:
 		ready_lst_pgcnt--;
 
 	pfn= page_to_pfn(page);
-
-#ifndef HETERO_JIT	
-	//add to used list of pages
-	//list_add(&page->lru, &hetero_used_lst_pgs);
-	init_page_count(page);
-#endif	
 	used_lst_pgcnt++;
-
 	spin_unlock(&heterolock);	
 
 	if(used_lst_pgcnt % 10000 == 0)
@@ -1010,6 +1022,10 @@ hetero_nxt_page:
 			page_to_pfn(page), ready_lst_pgcnt, dbg_resv_hetropg_cnt);
 #endif
 	return page;
+
+pagemisses:
+	hetero_page_miss++;
+	return NULL;
 }
 EXPORT_SYMBOL(hetero_getnxt_page);
 
@@ -1085,7 +1101,6 @@ int heteromem_init(int idx, unsigned long start, unsigned long size)
 EXPORT_SYMBOL(heteromem_init);
 
 
-
 int heteromem_app_exit(void){
 
 	if(!appexited){
@@ -1093,14 +1108,25 @@ int heteromem_app_exit(void){
 		print_perf_counters();
 		reset_perf_counters();
 		appexited=1;
+		printk(KERN_ALERT "fastmem hetero_page_miss %u\n",hetero_page_miss);
 	}
 }
 EXPORT_SYMBOL(heteromem_app_exit);
 
-int heteromem_app_enter(void){
+/*heteromem application enter*/
+int heteromem_app_enter(unsigned long testarg,
+                         unsigned int hot_scan_freq,
+                         unsigned int hot_scan_limit,
+                         unsigned int hot_shrink_freq,
+                         unsigned int usesharedmem,
+                         unsigned int maxfastmempgs){
+//int heteromem_app_enter(unsigned long testarg){	
+
 	printk(KERN_ALERT "calling heteromem_app_enter...\n");
+	//perf_set_test_arg(testarg);
 	reset_perf_counters();
 	appexited=0;
+	hetero_page_miss = 0;
 }
 EXPORT_SYMBOL(heteromem_app_enter);
 

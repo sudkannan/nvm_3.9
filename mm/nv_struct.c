@@ -1754,7 +1754,7 @@ struct page *delete_page_rbtree(struct rb_root *root){
             return NULL;
         }
         rb_erase(node, root);
-        add_to_free_nvlist(this->page); 
+        //add_to_free_nvlist(this->page); 
     }	
     return NULL;
 }
@@ -1815,7 +1815,7 @@ struct page *clear_page_data(struct rb_root *root){
 		//spin_lock(&nv_proclist_lock);
         rb_erase(node, root);
 		//clear_page(this->page);	
-        add_to_free_nvlist(this->page); 
+        //add_to_free_nvlist(this->page); 
 		//spin_unlock(&nv_proclist_lock);
      }	
     return NULL;

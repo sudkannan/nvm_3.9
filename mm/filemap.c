@@ -1632,12 +1632,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	pgoff_t size;
 	int ret = 0;
 
-#ifdef HETEROMEM_DISABLE
-	//if(current && current->mm && current->mm->def_flags && VM_HETERO){
-	//	printk(KERN_ALERT "filemap_fault entering \n");
-	//}	
-#endif
-
 	size = (i_size_read(inode) + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
 	if (offset >= size)
 		return VM_FAULT_SIGBUS;
@@ -1648,11 +1642,6 @@ int filemap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	page = find_get_page(mapping, offset);
 	if (likely(page) && !(vmf->flags & FAULT_FLAG_TRIED)) {
 
-#ifdef HETEROMEM_DISABLE
-	    //if(current && current->mm && current->mm->def_flags && VM_HETERO){
-    	  //  printk(KERN_ALERT "found find_get_page cache \n");
-    	//}
-#endif
 		/*
 		 * We found the page, so try async readahead before
 		 * waiting for the lock.

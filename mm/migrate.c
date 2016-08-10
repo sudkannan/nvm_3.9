@@ -3157,9 +3157,9 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	unsigned int size=0;
 	unsigned int hotpgcnt=0;
 	unsigned long end=0;
-	xen_pfn_t *hot_frame_list;
+	xen_pfn_t *hot_frame_list=NULL;
 	nodemask_t nmask;
-    LIST_HEAD(pagelist);
+        LIST_HEAD(pagelist);
 	//unsigned long migratetot=0;
 	unsigned int cntr=0;
 	int tmplock=0;
@@ -3171,17 +3171,17 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	struct timespec start_hyercall,end_hyercall;
 #endif //DEBUG_TIMER
 	
-	start = 0;
 
     if (flag == HETERO_APP_INIT) {
 
- 		if(current)
-		  current->heteroflag = PF_HETEROMEM;
-
-		heteromem_app_enter();
-
-		return nr_migrate_success;
-	}
+ 	if(current)
+	  current->heteroflag = PF_HETEROMEM;
+	printk(KERN_ALERT "sys_move_inactpages: calling sys_move_inactpages \n");
+	//heteromem_app_enter(start);
+	heteromem_app_enter(start,0,0,0,0,0);
+	return nr_migrate_success;
+     }
+     start=0;
 
 	if (!mm)
 		return 0;
@@ -3205,7 +3205,6 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 #endif	
 
 #if 1
-
 	if(current)		
 	current->heteroflag = PF_HETEROMEM;
 
@@ -3213,7 +3212,7 @@ asmlinkage long sys_move_inactpages(unsigned long start, unsigned long flag)
 	//get_hotpage_list(&tmplock);
 	hot_frame_list=get_hotpage_list_sharedmem(&hotpgcnt);
 	//get_hotpage_list(&tmplock);
- 	if(!hotpgcnt || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
+ 	if( (hotpgcnt == 0) || !hot_frame_list || hotpgcnt < HOT_MIN_MIG_LIMIT) {
 		return 0;
 	}
 

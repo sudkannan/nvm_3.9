@@ -19,7 +19,7 @@ static int alloc_shared_pages(void);
 static void free_shared_pages(void);
 
 /*perf counter related declarations*/
-#define READ_PERF_CNTRS
+//#define READ_PERF_CNTRS
 #define MAX_VCPUS 12
 #define RESET_PERFCOUNT 0
 #define READ_PERFCOUNT 1
@@ -28,6 +28,7 @@ struct perf_ctrs *perfcntr;
 struct perf_ctrs p_cores_sum;
 struct perf_ctrs prev_cores_sum;
 spinlock_t perfrd_lock;
+unsigned long LLC_MISS_MIGRATE_THRESHOLD;
 
 asmlinkage long sys_hsm_read(unsigned int start)
 {
@@ -101,17 +102,17 @@ int reset_perf_counters(void)
 	//GUEST_HANDLE(perf_ctrs) xen_guest_handle_perfctr;
 	//set_xen_guest_handle(xen_guest_handle_perfctr, &tmpperfcntr);
 
-	printk("Tot INSTS: %lu Tot CYCLES: %lu Tot LLCMISSES: %lu \n",
-	      p_cores_sum.instns, p_cores_sum.cycles, p_cores_sum.lmisses);
+	//printk("Tot INSTS: %lu Tot CYCLES: %lu Tot LLCMISSES: %lu \n",
+	  //    p_cores_sum.instns, p_cores_sum.cycles, p_cores_sum.lmisses);
 
 	prev_cores_sum.instns = p_cores_sum.instns;
 	prev_cores_sum.cycles = p_cores_sum.cycles;
 	prev_cores_sum.lmisses = p_cores_sum.lmisses;
 
 
-	p_cores_sum.instns = 0;
+	/*p_cores_sum.instns = 0;
 	p_cores_sum.cycles = 0;
-	p_cores_sum.lmisses = 0;
+	p_cores_sum.lmisses = 0;*/
 
     if ((ret = HYPERVISOR_perfctr_op(RESET_PERFCOUNT, &tmpperfcntr)) < 0)
     {
@@ -180,25 +181,43 @@ int print_perf_counters(void)
 }
 EXPORT_SYMBOL(print_perf_counters);
 
+
+void perf_set_test_arg(unsigned long arg){
+
+	LLC_MISS_MIGRATE_THRESHOLD = arg;
+}
+EXPORT_SYMBOL(perf_set_test_arg);
+
+
+
 int MigrationEnable(){
 
 	unsigned long diff;
 
-	if(p_cores_sum.lmisses < 500000){
-		return 0;
+	if(p_cores_sum.lmisses > LLC_MISS_MIGRATE_THRESHOLD){
+		return 1;
 	}
 
-	if(p_cores_sum.lmisses > prev_cores_sum.lmisses){
-		diff = p_cores_sum.lmisses - prev_cores_sum.lmisses;
+	if(p_cores_sum.lmisses && (p_cores_sum.lmisses > prev_cores_sum.lmisses)){
+		/*diff = p_cores_sum.lmisses - prev_cores_sum.lmisses;
+		if(prev_cores_sum.lmisses && ((diff/prev_cores_sum.lmisses)*100 < 10)){
+			printk("diff %lu, p_cores_sum.lmisses %lu, prev_cores_sum.lmisses %lu \n",
+				diff, p_cores_sum.lmisses, prev_cores_sum.lmisses);
+			return 0;
+		}*/
 		return 1;
 	}else{
 		diff = prev_cores_sum.lmisses - p_cores_sum.lmisses;
-		if(diff/prev_cores_sum.lmisses*100 > 50)
-		/*Dont migrate*/	
-		return 0;	
-	}
-}
+		if(p_cores_sum.lmisses && (diff/p_cores_sum.lmisses*100 > 10)){
 
+			printk("diff %lu, p_cores_sum.lmisses %lu, prev_cores_sum.lmisses %lu \n",
+				diff, p_cores_sum.lmisses, prev_cores_sum.lmisses);
+			return 0;	
+		}
+	}
+	return 1;
+}
+EXPORT_SYMBOL(MigrationEnable);
 
 asmlinkage long sys_hsm_alloc(void)
 {
@@ -250,11 +269,12 @@ xen_pfn_t *get_hotpage_list_sharedmem(unsigned int *hotcnt)
 #ifdef READ_PERF_CNTRS
 	get_perf_counters();
 
-	if(!MigrationEnable()){
-		*hotcnt =0;
-		return frame_list;
-	}
-	reset_perf_counters();
+	//if(!MigrationEnable()){
+	//	*hotcnt =0;
+	//	return frame_list;
+	//}
+	print_perf_counters();
+	//reset_perf_counters();
 #endif
 
     frames_ppage = PAGE_SIZE / sizeof(struct frame);
